@@ -1,0 +1,186 @@
+// Shared data model. Dates are local ISO days: "YYYY-MM-DD".
+
+export type Sex = 'f' | 'm';
+
+export interface Profile {
+  onboarded: boolean;
+  sex: Sex | null;
+  age: number | null;
+  heightCm: number;
+  startWeight: number;
+  /** First day of the plan (the "lavage" starts here). */
+  startDate: string;
+  /** Milestone weight (palier) to reach by goalDate — the holidays. */
+  goalWeight: number;
+  /** Deadline for the milestone (departure on holidays). */
+  goalDate: string;
+  /** Long-term weight goal, reached after the milestone at ~0.5 kg/week. */
+  finalGoalWeight?: number;
+  /** Last day of the fast "lavage" phase. */
+  lavageEnd: string;
+  vacationStart: string;
+  vacationEnd: string;
+  /** First day of the half-ironman specific preparation. */
+  prepStart: string;
+  raceDate: string;
+  raceName: string;
+  /** Activity factor applied to BMR, without logged workouts (1.2 sedentary … 1.5 active job). */
+  activity: number;
+  /** Weekdays with basketball, 0 = Monday … 6 = Sunday. */
+  basketDays: number[];
+  /** Menstrual cycle settings (absent on old profiles: see DEFAULT_CYCLE). */
+  cycle?: CycleSettings;
+}
+
+export interface CycleSettings {
+  tracking: boolean;
+  /** Fallback cycle length until enough periods are logged. */
+  avgLength: number;
+  periodLength: number;
+  lutealLength: number;
+  /** Trying to conceive: deficit capped, fertile window highlighted. */
+  ttc: boolean;
+  /** Pregnancy mode: no deficit, pregnancy-safe sport guidance. */
+  pregnant: boolean;
+  pregnantSince?: string;
+}
+
+export interface CycleDay {
+  /** 'start' marks cycle day 1. */
+  period?: 'start' | 'flow' | 'spotting';
+  lh?: 'neg' | 'pos';
+  pregnancyTest?: 'neg' | 'pos';
+  /** 1 (very low) … 5 (great). */
+  energy?: number;
+  symptoms?: string[];
+}
+
+export interface BodyComp {
+  fatPct?: number;
+  musclePct?: number;
+  waterPct?: number;
+  visceral?: number;
+  bmr?: number;
+}
+
+export type MealSlot = 'petit-dej' | 'dejeuner' | 'diner' | 'collation';
+export type MealSource = 'manuel' | 'favori' | 'photo' | 'hellofresh';
+
+export interface Meal {
+  id: string;
+  slot: MealSlot;
+  name: string;
+  kcal: number;
+  protein?: number;
+  carbs?: number;
+  fat?: number;
+  source: MealSource;
+}
+
+export interface FavoriteMeal {
+  id: string;
+  name: string;
+  kcal: number;
+  protein?: number;
+  carbs?: number;
+  fat?: number;
+  /** True for HelloFresh recipes (per portion). */
+  hellofresh?: boolean;
+}
+
+export type Sport =
+  | 'swim'
+  | 'bike'
+  | 'run'
+  | 'strength'
+  | 'basket'
+  | 'walk'
+  | 'mobility'
+  | 'other';
+
+export interface Workout {
+  id: string;
+  sport: Sport;
+  minutes: number;
+  /** Perceived effort 1–10. */
+  rpe?: number;
+  note?: string;
+  /** Id of the planned session this workout completes, if any. */
+  plannedId?: string;
+  /** Done as the short "mini" version. */
+  mini?: boolean;
+  distanceKm?: number;
+}
+
+export interface DayLog {
+  date: string;
+  weight?: number;
+  body?: BodyComp;
+  meals: Meal[];
+  workouts: Workout[];
+  /** Water in litres. */
+  water?: number;
+  note?: string;
+  cycle?: CycleDay;
+  /** Daily lifestyle pillars ticked (keys from lib/habits.ts HABITS). */
+  habits?: Record<string, boolean>;
+  /** Numbers copied from Garmin Connect. */
+  wellbeing?: Wellbeing;
+}
+
+export interface Wellbeing {
+  sleepH?: number;
+  /** Garmin Body Battery at wake-up, 0–100. */
+  bodyBattery?: number;
+  /** Garmin average stress, 0–100. */
+  stress?: number;
+  restingHr?: number;
+  steps?: number;
+  /** Breathing (cohérence cardiaque) sessions done today. */
+  breathing?: number;
+}
+
+export type Intensity = 'facile' | 'modéré' | 'soutenu';
+
+export interface PlannedSession {
+  /** Stable id, e.g. "2026-10-05-swim". */
+  id: string;
+  date: string;
+  sport: Sport;
+  title: string;
+  minutes: number;
+  intensity: Intensity;
+  /** What to do, in plain French, 1–3 short sentences. */
+  details: string;
+  /** The "no motivation" fallback: ~15 min version. */
+  mini?: string;
+  optional?: boolean;
+}
+
+export type PhaseId = 'lavage' | 'progressive' | 'vacances' | 'prepa' | 'course' | 'avant';
+
+export interface PlanWeek {
+  index: number;
+  /** Monday of the week. */
+  start: string;
+  phase: PhaseId;
+  /** One-line intention for the week. */
+  focus: string;
+  sessions: PlannedSession[];
+}
+
+export interface SeasonBlock {
+  name: string;
+  start: string;
+  end: string;
+  goal: string;
+}
+
+export interface AppState {
+  profile: Profile;
+  days: Record<string, DayLog>;
+  favorites: FavoriteMeal[];
+  /** Where data lives. Always 'local' (this device only); kept for future sync. */
+  backend: 'cloud' | 'local';
+  loaded: boolean;
+}
