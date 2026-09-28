@@ -450,3 +450,104 @@ body::before {
   z-index: 40;
 }
 .sheet { max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 12px); }
+
+/* ---- cycle calendar v3 ---- */
+/* "Tu es ici" on the cycle strip */
+.cc-here-line { font-size: 0.95rem; line-height: 1.4; text-wrap: pretty; }
+.cc-here { position: relative; height: 30px; margin-bottom: -2px; }
+.cc-here-label {
+  position: absolute; top: 0; white-space: nowrap;
+  padding: 2px 8px; border-radius: 999px;
+  background: var(--ink); color: var(--bg);
+  font-family: var(--font-num); font-size: 0.72rem; font-weight: 500; letter-spacing: 0;
+}
+.cc-here-label.mid { transform: translateX(-50%); }
+.cc-here-label.start { transform: translateX(-14px); }
+.cc-here-label.end { transform: translateX(calc(-100% + 14px)); }
+.cc-here-caret {
+  position: absolute; bottom: 0; width: 0; height: 0; margin-left: -5px;
+  border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid var(--ink);
+}
+.bal-cell.fut { opacity: 0.45; }
+.bal-cell.today { outline-width: 2.5px; }
+.cc-strip-ends { display: flex; justify-content: space-between; gap: 8px; font-size: 0.72rem; }
+
+/* month grid */
+.cc-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.cc-head span { text-align: center; font-family: var(--font-num); font-size: 0.7rem; color: var(--muted); }
+.cc-day {
+  position: relative; aspect-ratio: 1; min-width: 0; padding: 0;
+  border: 1px solid transparent; border-radius: 10px;
+  background: var(--surface-2); color: var(--ink);
+  display: grid; place-items: center; cursor: pointer;
+}
+.cc-day.empty { background: transparent; cursor: default; }
+.cc-day:active { transform: scale(0.96); }
+.cc-num { font-size: 0.86rem; }
+.cc-day.fut { background: transparent; border-color: var(--line); color: var(--muted); }
+.cc-day.fer { background: color-mix(in srgb, var(--accent) 30%, var(--surface)); }
+.cc-day.fer.fut { background: color-mix(in srgb, var(--accent) 11%, var(--surface)); border-color: color-mix(in srgb, var(--accent) 30%, var(--line)); }
+.cc-day.per { background: color-mix(in srgb, var(--bad) 55%, var(--surface)); color: var(--ink); font-weight: 700; }
+.cc-day.pred {
+  border: 1.5px dashed color-mix(in srgb, var(--bad) 65%, var(--surface));
+  background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--bad) 16%, transparent) 0 3px, transparent 3px 7px);
+}
+.cc-day.ov { box-shadow: inset 0 0 0 2px var(--accent); }
+.cc-day.ov.fut { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 55%, var(--surface)); }
+.cc-day.today { outline: 2.5px solid var(--ink); outline-offset: 1px; z-index: 1; }
+.cc-day.today .cc-num { font-weight: 700; color: var(--ink); }
+.cc-lh { position: absolute; top: 3px; right: 3px; width: 7px; height: 7px; border-radius: 2px; background: var(--accent); }
+.cc-dots { position: absolute; left: 0; right: 0; bottom: 3px; display: flex; justify-content: center; gap: 3px; }
+.cc-dots i, .cc-key-dot { display: block; width: 5px; height: 5px; border-radius: 50%; }
+.cc-spot { background: var(--bad); }
+.cc-note { background: var(--muted); }
+.cc-day.per .cc-note { background: var(--ink); }
+.cc-legend i { flex: none; }
+.cc-key { display: inline-block; width: 12px; height: 12px; border-radius: 4px; background: var(--surface-2); border: 1px solid transparent; }
+.cc-key.per { background: color-mix(in srgb, var(--bad) 55%, var(--surface)); }
+.cc-key.pred { border: 1.5px dashed color-mix(in srgb, var(--bad) 65%, var(--surface)); background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--bad) 16%, transparent) 0 2px, transparent 2px 4px); }
+.cc-key.fer { background: color-mix(in srgb, var(--accent) 30%, var(--surface)); }
+.cc-key.ov { box-shadow: inset 0 0 0 2px var(--accent); }
+.cc-key-lh { display: inline-block; width: 7px; height: 7px; border-radius: 2px; background: var(--accent); }
+.cc-key-rest { background: color-mix(in srgb, var(--accent) 45%, var(--surface)); }
+.cc-sheet-pos { font-weight: 700; color: var(--accent); }
+
+/* day by day */
+.cc-rows { display: flex; flex-direction: column; }
+.cc-row {
+  display: flex; align-items: flex-start; gap: 10px; width: 100%;
+  padding: 9px 0; background: none; border: 0; border-bottom: 1px solid var(--line);
+  text-align: left; color: inherit; font: inherit; cursor: pointer;
+}
+.cc-row:last-child { border-bottom: 0; }
+.cc-row:active { background: var(--surface-2); }
+.cc-row-day { flex: none; width: 38px; padding-top: 1px; font-size: 0.8rem; color: var(--muted); }
+.cc-row.today .cc-row-day, .cc-row.today .cc-row-date { color: var(--accent); font-weight: 700; }
+.cc-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.cc-row-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.cc-row-date { font-size: 0.88rem; font-weight: 700; white-space: nowrap; }
+.cc-row-log { font-size: 0.84rem; overflow-wrap: anywhere; }
+.cc-phase { flex: none; padding: 1px 8px; border-radius: 999px; font-size: 0.72rem; color: var(--ink); background: var(--surface-2); white-space: nowrap; }
+.cc-phase.ph-regles { background: color-mix(in srgb, var(--bad) 30%, var(--surface)); }
+.cc-phase.ph-fertile { background: color-mix(in srgb, var(--accent) 25%, var(--surface)); }
+.cc-phase.ph-luteale { background: color-mix(in srgb, var(--warn) 18%, var(--surface)); }
+.cc-phase.ph-premenstruel { background: color-mix(in srgb, var(--warn) 35%, var(--surface)); }
+.cc-phase.ph-retard { background: transparent; border: 1px dashed var(--line); }
+
+/* cycle history */
+.cc-summary { font-family: var(--font-display); font-size: 1.15rem; font-weight: 600; }
+.cc-cycs { display: flex; flex-direction: column; }
+.cc-cyc { display: flex; flex-direction: column; gap: 5px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.cc-cyc:last-child { border-bottom: 0; }
+.cc-cyc-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.cc-cyc-date { font-weight: 700; font-size: 0.9rem; }
+.cc-cyc-len { font-size: 0.86rem; white-space: nowrap; }
+.cc-cyc-bar { display: flex; height: 8px; gap: 1px; }
+.cc-cyc-bar span { display: block; height: 100%; }
+.cc-cyc-per { background: color-mix(in srgb, var(--bad) 55%, var(--surface)); border-radius: 99px 0 0 99px; }
+.cc-cyc-rest { background: color-mix(in srgb, var(--accent) 45%, var(--surface)); border-radius: 0 99px 99px 0; }
+.cc-cyc-rest.odd { background: color-mix(in srgb, var(--warn) 40%, var(--surface)); }
+.cc-cyc-pred { border: 1px dashed var(--line); border-radius: 0 99px 99px 0; }
+.cc-cyc-rest.solo { border-radius: 99px; }
+.cc-tabs .seg-item { white-space: nowrap; padding: 0 4px; font-size: 0.82rem; }
+/* ---- /cycle calendar v3 ---- */

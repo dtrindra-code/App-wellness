@@ -3,12 +3,13 @@
 // and a short cortisol reminder.
 
 import type { Screen, ScreenCtx } from './types';
-import type { CycleDay, DayLog, Profile, Wellbeing } from '../types';
+import type { Profile, Wellbeing } from '../types';
 import { store } from '../store';
-import { h, gearIcon, field, openSheet, parseNum, toast, fmtInt } from '../lib/ui';
+import { h, gearIcon, field, parseNum, toast, fmtInt } from '../lib/ui';
 import { today, addDays, daysBetween, fmtShort, fmtDayMonth, fmtLong, mondayOf } from '../lib/dates';
-import { cycleOn, cycleSettings, adviceFor, phaseLabel, TTC_TIPS, PREGNANCY_NOTE } from '../lib/cycle';
-import type { CycleInfo, CyclePhase } from '../lib/cycle';
+import { cycleOn, cycleSettings, cycleModel, positionOn, adviceFor, phaseLabel, TTC_TIPS, PREGNANCY_NOTE } from '../lib/cycle';
+import type { CycleInfo } from '../lib/cycle';
+import { cycleLog, hereSentence, openPeriodSheet, toggleChip, trackCard, updateCycle } from './cycle-calendar';
 import {
   HABITS, habitScore, weekHabitStats, recoveryFlag, sleepWeightInsight, recentWellbeing,
   COHERENCE_TARGET,
@@ -21,7 +22,6 @@ const whyOpen = new Set<string>();
 let ttcOpen = false;
 let confirmPregnancyOff = false;
 
-const SYMPTOMS = ['crampes', 'ballonnements', 'fatigue', 'fringales', 'maux de tête', 'seins sensibles', 'humeur basse'];
 const WEEK_LETTERS = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
 
 export const renderBalance: Screen = (root, ctx) => {
@@ -32,6 +32,7 @@ export const renderBalance: Screen = (root, ctx) => {
 
   root.append(header(date, ctx, info));
   if (cs.tracking) root.append(cs.pregnant ? pregnancyCard(date) : cycleCard(date, p, info));
+  if (cs.tracking && !cs.pregnant) root.append(trackCard(date));
   root.append(pillarsCard(date), breathingCard(date), garminCard(date), insightsCard(date), cortisolCard());
 };
 
@@ -54,30 +55,6 @@ function header(date: string, ctx: ScreenCtx, info: CycleInfo | null): HTMLEleme
 
 // ---------- cycle helpers ----------
 
-/** Mutate today's (or any day's) cycle log; empty logs are removed. */
-function updateCycle(date: string, fn: (c: CycleDay) => void) {
-  void store.updateDay(date, (d) => {
-    const c: CycleDay = { ...(d.cycle ?? {}) };
-    fn(c);
-    (Object.keys(c) as (keyof CycleDay)[]).forEach((k) => {
-      const v = c[k];
-      if (v === undefined || (Array.isArray(v) && !v.length)) delete c[k];
-    });
-    if (Object.keys(c).length) d.cycle = c;
-    else delete d.cycle;
-  });
-}
-
-function phaseOfDay(d: string, info: CycleInfo, periodLength: number): CyclePhase {
-  const n = daysBetween(info.cycleStart, d) + 1;
-  if (d >= info.nextPeriod) return 'retard';
-  if (n <= periodLength) return 'regles';
-  if (d >= info.fertileStart && d <= info.fertileEnd) return 'fertile';
-  if (d < info.fertileStart) return 'folliculaire';
-  if (daysBetween(d, info.nextPeriod) <= 5) return 'premenstruel';
-  return 'luteale';
-}
-
 // ---------- 1. cycle ----------
 
 function cycleCard(date: string, p: Profile, info: CycleInfo | null): HTMLElement {
@@ -89,7 +66,7 @@ function cycleCard(date: string, p: Profile, info: CycleInfo | null): HTMLElemen
       h('h2', null, 'Cycle'),
       h('p', { class: 'small muted' }, 'Note le 1er jour de tes dernières règles : l’app estimera ta phase, ton ovulation et tes prochaines règles.'),
       h('button', { class: 'btn primary block', type: 'button', onclick: () => openPeriodSheet(date, true) }, 'Noter mes dernières règles'),
-      dailyLog(date),
+      cycleLog(date, { title: 'Aujourd’hui', explicit: false }),
     );
     return card;
   }
@@ -98,9 +75,10 @@ function cycleCard(date: string, p: Profile, info: CycleInfo | null): HTMLElemen
   card.append(
     h('div', { class: 'card-head' },
       h('h2', null, phaseLabel(info.phase)),
-      h('span', { class: 'small muted num' }, `Jour ${info.day} du cycle (~${info.length} j)`),
+      h('span', { class: 'small muted num' }, `J${info.day} / ~${info.length}`),
     ),
-    cycleStrip(date, info, cs.periodLength),
+    h('p', { class: 'cc-here-line' }, hereSentence(date, info)),
+    cycleStrip(date, info),
     h('div', { class: 'grid-3 bal-dates' },
       stat('Prochaines règles', fmtDayMonth(info.nextPeriod)),
       stat(info.ovulationFromLH ? 'Ovulation (test LH)' : 'Ovulation', fmtDayMonth(info.ovulation)),
@@ -138,7 +116,7 @@ function cycleCard(date: string, p: Profile, info: CycleInfo | null): HTMLElemen
     card.append(fold, list);
   }
 
-  card.append(dailyLog(date), h('button', { class: 'btn ghost sm', type: 'button', style: 'align-self:flex-start', onclick: () => openPeriodSheet(date, false) }, 'Début de règles un autre jour'));
+  card.append(cycleLog(date, { title: 'Aujourd’hui', explicit: false }), h('button', { class: 'btn ghost sm', type: 'button', style: 'align-self:flex-start', onclick: () => openPeriodSheet(date, false) }, 'Début de règles un autre jour'));
   return card;
 }
 
@@ -153,21 +131,36 @@ function adviceRow(title: string, text: string): HTMLElement {
   );
 }
 
-function cycleStrip(date: string, info: CycleInfo, periodLength: number): HTMLElement {
-  const n = Math.min(60, Math.max(info.length, info.day));
+function cycleStrip(date: string, info: CycleInfo): HTMLElement {
+  const m = cycleModel(date, store.profile, store.state.days);
+  const n = Math.min(60, Math.max(daysBetween(info.cycleStart, info.nextPeriod), info.day));
   const cells: HTMLElement[] = [];
   for (let i = 0; i < n; i++) {
     const d = addDays(info.cycleStart, i);
-    const ph = phaseOfDay(d, info, periodLength);
+    const ph = positionOn(m, d)?.phase ?? 'retard';
     const cls = ['bal-cell', `ph-${ph}`];
     if (d === date) cls.push('today');
+    if (d > date) cls.push('fut');
     if (d === info.ovulation) cls.push('ov');
-    cells.push(h('span', { class: cls.join(' '), title: `${fmtShort(d)} · ${phaseLabel(ph)}` }));
+    cells.push(h('span', { class: cls.join(' '), title: `${fmtShort(d)} · ${phaseLabel(ph)}${d > date ? ' (prévu)' : ''}` }));
   }
+  // "Tu es ici" marker: label above, caret pointing at today's cell.
+  const idx = info.day - 1;
+  const center = ((idx + 0.5) / n) * 100;
+  const align = center < 22 ? 'start' : center > 78 ? 'end' : 'mid';
   return h('div', { class: 'stack', style: 'gap:6px' },
-    h('div', { class: 'bal-strip', role: 'img', 'aria-label': `Cycle en cours, jour ${info.day} sur environ ${info.length}` }, cells),
+    h('div', { class: 'cc-here', 'aria-hidden': 'true' },
+      h('span', { class: `cc-here-label ${align}`, style: `left:${center}%` }, `Aujourd’hui · J${info.day}`),
+      h('span', { class: 'cc-here-caret', style: `left:${center}%` }),
+    ),
+    h('div', { class: 'bal-strip', role: 'img', 'aria-label': `Cycle en cours : tu es au jour ${info.day} sur environ ${info.length}` }, cells),
+    h('div', { class: 'cc-strip-ends small muted num', 'aria-hidden': 'true' },
+      h('span', null, `J1 · ${fmtDayMonth(info.cycleStart)}`),
+      h('span', null, `règles ~${fmtDayMonth(info.nextPeriod)}`),
+    ),
     h('div', { class: 'w-legend' },
       legend('ph-regles', 'Règles'), legend('ph-fertile', 'Fertile'), legend('ph-luteale', 'Lutéale'), legend('ph-premenstruel', 'Avant règles'),
+      h('span', null, h('i', { class: 'bal-cell bal-key ph-luteale fut' }), 'Plus clair : prévu'),
     ),
   );
 }
@@ -227,84 +220,6 @@ function pregnancyCard(date: string): HTMLElement {
     h('p', { class: 'small muted' }, 'Acide folique : demande à ton médecin ou ta sage-femme.'),
     offSlot,
   );
-}
-
-function dailyLog(date: string): HTMLElement {
-  const c = store.getDay(date).cycle ?? {};
-  const bleeding = c.period === 'start' || c.period === 'flow';
-  const symptoms = c.symptoms ?? [];
-
-  const togglePeriod = () => updateCycle(date, (cy) => {
-    if (bleeding) { cy.period = undefined; return; }
-    const prev = store.getDay(addDays(date, -1)).cycle?.period;
-    const prevBleeding = prev === 'start' || prev === 'flow';
-    // A start logged in the last few days means we are still in the same period.
-    const recent = cycleOn(addDays(date, -1), store.profile, store.state.days);
-    const sameBleed = recent !== null && recent.day <= cycleSettings(store.profile).periodLength + 2;
-    cy.period = prevBleeding || sameBleed ? 'flow' : 'start';
-  });
-
-  return h('div', { class: 'stack bal-sub', style: 'gap:10px' },
-    h('h3', null, 'Aujourd’hui'),
-    h('div', { class: 'row wrap', style: 'gap:6px' },
-      toggleChip('Règles aujourd’hui', bleeding, togglePeriod),
-      toggleChip('Spotting', c.period === 'spotting', () => updateCycle(date, (cy) => { cy.period = c.period === 'spotting' ? undefined : 'spotting'; })),
-      toggleChip('Test LH +', c.lh === 'pos', () => updateCycle(date, (cy) => { cy.lh = c.lh === 'pos' ? undefined : 'pos'; })),
-      toggleChip('Test LH −', c.lh === 'neg', () => updateCycle(date, (cy) => { cy.lh = c.lh === 'neg' ? undefined : 'neg'; })),
-    ),
-    h('div', { class: 'row', style: 'gap:8px' },
-      h('span', { class: 'small muted', style: 'flex:none' }, 'Énergie'),
-      h('div', { class: 'seg grow', role: 'group', 'aria-label': 'Énergie de 1 à 5' },
-        [1, 2, 3, 4, 5].map((n) =>
-          h('button', {
-            class: 'seg-item' + (c.energy === n ? ' on' : ''), type: 'button', 'aria-pressed': c.energy === n ? 'true' : 'false',
-            onclick: () => updateCycle(date, (cy) => { cy.energy = c.energy === n ? undefined : n; }),
-          }, String(n)),
-        ),
-      ),
-    ),
-    h('div', { class: 'row wrap', style: 'gap:6px' },
-      SYMPTOMS.map((s) => toggleChip(s, symptoms.includes(s), () => updateCycle(date, (cy) => {
-        const set = new Set(cy.symptoms ?? []);
-        if (set.has(s)) set.delete(s); else set.add(s);
-        cy.symptoms = SYMPTOMS.filter((x) => set.has(x));
-      }))),
-    ),
-  );
-}
-
-function toggleChip(label: string, on: boolean, onclick: () => void): HTMLElement {
-  return h('button', { class: 'bal-chip' + (on ? ' on' : ''), type: 'button', 'aria-pressed': on ? 'true' : 'false', onclick }, label);
-}
-
-function openPeriodSheet(date: string, withHistory: boolean) {
-  const main = h('input', { type: 'date', max: date, value: date });
-  const e1 = h('input', { type: 'date', max: date });
-  const e2 = h('input', { type: 'date', max: date });
-  const err = h('p', { class: 'small tone-bad', role: 'alert' });
-  const content = h('div', { class: 'stack' },
-    field(withHistory ? '1er jour des dernières règles' : '1er jour des règles', main),
-    withHistory
-      ? h('div', { class: 'stack' },
-          h('p', { class: 'small muted' }, 'Facultatif : les deux précédentes, pour de meilleures estimations.'),
-          h('div', { class: 'grid-2' }, field('Avant', e1), field('Encore avant', e2)))
-      : null,
-    err,
-    h('button', { class: 'btn primary block', type: 'button', onclick: save }, 'Enregistrer'),
-  );
-  const sheet = openSheet(withHistory ? 'Dernières règles' : 'Début de règles', content);
-
-  function save() {
-    const dates = [main.value, e1.value, e2.value].filter(Boolean);
-    if (!main.value) { err.textContent = 'Choisis une date.'; return; }
-    if (dates.some((d) => d > date)) { err.textContent = 'Les dates doivent être passées.'; return; }
-    if (new Set(dates).size !== dates.length) { err.textContent = 'Deux dates identiques.'; return; }
-    for (const d of dates) {
-      void store.updateDay(d, (day: DayLog) => { day.cycle = { ...(day.cycle ?? {}), period: 'start' }; });
-    }
-    sheet.close();
-    toast('Noté');
-  }
 }
 
 // ---------- 2. pillars ----------

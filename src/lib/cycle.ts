@@ -228,3 +228,171 @@ export const TTC_TIPS: string[] = [
 /** Pregnancy mode: the app stops the weight-loss deficit. */
 export const PREGNANCY_NOTE =
   'Mode grossesse : plus de déficit calorique, on mange à l’équilibre. Le sport continue si tout va bien, à valider avec ta sage-femme ou ton médecin (pas de sports à risque de chute ou de choc, pas d’effort à bout de souffle).';
+
+// ---------- history, calendar & day-by-day (pure) ----------
+
+export interface CycleRecord {
+  start: string;
+  /** Next logged period start; null for the cycle in progress. */
+  next: string | null;
+  /** Days from this start to the next one; null while in progress. */
+  length: number | null;
+  /** Consecutive logged bleeding days from the start (2+), else null. */
+  periodDays: number | null;
+  ovulation: string;
+  ovulationFromLH: boolean;
+  fertileStart: string;
+  fertileEnd: string;
+}
+
+export interface CycleModel {
+  today: string;
+  starts: string[];
+  /** Length used for predictions (averageLength). */
+  length: number;
+  periodLength: number;
+  lutealLength: number;
+  /** Oldest first; the last one is the cycle in progress (when any start is logged). */
+  cycles: CycleRecord[];
+  /** Position today (null when nothing is logged). */
+  info: CycleInfo | null;
+  /** First day of the first predicted (not yet logged) period. */
+  predictedFrom: string | null;
+}
+
+const isBleeding = (d: DayLog | undefined) => d?.cycle?.period === 'start' || d?.cycle?.period === 'flow';
+
+/** Consecutive bleeding days logged from `start` (the start counts); null when only the start is logged. */
+export function loggedPeriodDays(start: string, days: Record<string, DayLog>, limit = 12): number | null {
+  let n = 0;
+  while (n < limit && isBleeding(days[addDays(start, n)])) n++;
+  return n >= 2 ? n : null;
+}
+
+/** First positive LH test in [from, to). */
+function firstLH(days: Record<string, DayLog>, from: string, to: string): string | undefined {
+  return Object.values(days)
+    .filter((d) => d.cycle?.lh === 'pos' && d.date >= from && d.date < to)
+    .map((d) => d.date)
+    .sort()[0];
+}
+
+export function cycleModel(todayDate: string, p: Profile, days: Record<string, DayLog>): CycleModel {
+  const cs = cycleSettings(p);
+  const starts = periodStarts(days).filter((d) => d <= todayDate);
+  const length = averageLength(starts, cs.avgLength);
+  const info = cycleOn(todayDate, p, days);
+  const cycles: CycleRecord[] = starts.map((start, i) => {
+    const next = starts[i + 1] ?? null;
+    if (next === null && info) {
+      return {
+        start, next, length: null, periodDays: loggedPeriodDays(start, days),
+        ovulation: info.ovulation, ovulationFromLH: info.ovulationFromLH,
+        fertileStart: info.fertileStart, fertileEnd: info.fertileEnd,
+      };
+    }
+    const end = next ?? addDays(start, length);
+    const lh = firstLH(days, start, end);
+    const ovulation = lh ? addDays(lh, 1) : addDays(end, -cs.lutealLength);
+    return {
+      start, next, length: next ? daysBetween(start, next) : null, periodDays: loggedPeriodDays(start, days),
+      ovulation, ovulationFromLH: !!lh,
+      fertileStart: addDays(ovulation, -5), fertileEnd: addDays(ovulation, 1),
+    };
+  });
+  const predictedFrom = info ? (info.nextPeriod > todayDate ? info.nextPeriod : addDays(todayDate, 1)) : null;
+  return { today: todayDate, starts, length, periodLength: cs.periodLength, lutealLength: cs.lutealLength, cycles, info, predictedFrom };
+}
+
+export interface DayPosition {
+  /** Cycle day, 1-based. */
+  day: number;
+  phase: CyclePhase;
+  cycleStart: string;
+  ovulation: string;
+  fertileStart: string;
+  fertileEnd: string;
+  /** True for dates after today (projection from the average length). */
+  predicted: boolean;
+  /** True when the date lies in a projected future cycle (no logged start). */
+  projected: boolean;
+  ovulationFromLH: boolean;
+}
+
+function phaseFrom(date: string, day: number, periodLen: number, fertileStart: string, fertileEnd: string, next: string): CyclePhase {
+  if (day <= periodLen) return 'regles';
+  if (date >= fertileStart && date <= fertileEnd) return 'fertile';
+  if (date < fertileStart) return 'folliculaire';
+  if (daysBetween(date, next) <= 5) return 'premenstruel';
+  return 'luteale';
+}
+
+/** Where `date` falls: logged cycles for the past, the current estimate, then projected cycles. Null before the first logged start. */
+export function positionOn(m: CycleModel, date: string): DayPosition | null {
+  if (!m.cycles.length || date < m.cycles[0].start) return null;
+  const predicted = date > m.today;
+  if (m.predictedFrom && date >= m.predictedFrom) {
+    const k = Math.floor(daysBetween(m.predictedFrom, date) / m.length);
+    const start = addDays(m.predictedFrom, k * m.length);
+    const next = addDays(start, m.length);
+    const ovulation = addDays(next, -m.lutealLength);
+    const fs = addDays(ovulation, -5);
+    const fe = addDays(ovulation, 1);
+    const day = daysBetween(start, date) + 1;
+    return { day, phase: phaseFrom(date, day, m.periodLength, fs, fe, next), cycleStart: start, ovulation, fertileStart: fs, fertileEnd: fe, predicted, projected: true, ovulationFromLH: false };
+  }
+  let idx = m.cycles.length - 1;
+  while (idx > 0 && m.cycles[idx].start > date) idx--;
+  const c = m.cycles[idx];
+  const day = daysBetween(c.start, date) + 1;
+  if (c.next === null && m.info) {
+    const info = m.info;
+    const phase: CyclePhase = date >= info.nextPeriod ? 'retard'
+      : phaseFrom(date, day, m.periodLength, info.fertileStart, info.fertileEnd, info.nextPeriod);
+    return { day, phase, cycleStart: c.start, ovulation: c.ovulation, fertileStart: c.fertileStart, fertileEnd: c.fertileEnd, predicted, projected: false, ovulationFromLH: c.ovulationFromLH };
+  }
+  const next = c.next ?? addDays(c.start, m.length);
+  const phase = phaseFrom(date, day, c.periodDays ?? m.periodLength, c.fertileStart, c.fertileEnd, next);
+  return { day, phase, cycleStart: c.start, ovulation: c.ovulation, fertileStart: c.fertileStart, fertileEnd: c.fertileEnd, predicted, projected: false, ovulationFromLH: c.ovulationFromLH };
+}
+
+export interface DayMark {
+  period: boolean;
+  spotting: boolean;
+  predictedPeriod: boolean;
+  fertile: boolean;
+  ovulation: boolean;
+  lhPos: boolean;
+  /** Energy or symptoms noted. */
+  noted: boolean;
+  future: boolean;
+}
+
+/** What the month calendar draws for one day. */
+export function dayMark(m: CycleModel, date: string, days: Record<string, DayLog>): DayMark {
+  const c = days[date]?.cycle;
+  const pos = positionOn(m, date);
+  const period = isBleeding(days[date]);
+  const future = date > m.today;
+  const predictedPeriod = !!pos && pos.projected && future && pos.day <= m.periodLength;
+  return {
+    period,
+    spotting: c?.period === 'spotting',
+    predictedPeriod,
+    fertile: !!pos && !period && !predictedPeriod && date >= pos.fertileStart && date <= pos.fertileEnd,
+    ovulation: !!pos && date === pos.ovulation,
+    lhPos: c?.lh === 'pos',
+    noted: c?.energy !== undefined || !!c?.symptoms?.length,
+    future,
+  };
+}
+
+export interface LengthStats { mean: number; min: number; max: number; count: number; excluded: number }
+
+/** Summary of completed cycle lengths. Mean = the prediction length (last 6 plausible cycles); min/max over all plausible ones (21–40 j). */
+export function lengthStats(m: CycleModel): LengthStats | null {
+  const all = m.cycles.map((c) => c.length).filter((n): n is number => n !== null);
+  const ok = all.filter((n) => n >= 21 && n <= 40);
+  if (!ok.length) return null;
+  return { mean: m.length, min: Math.min(...ok), max: Math.max(...ok), count: ok.length, excluded: all.length - ok.length };
+}
