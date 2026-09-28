@@ -82,7 +82,7 @@ p { margin: 0; }
   max-width: 520px;
   margin: 0 auto;
   padding-inline: 16px;
-  padding-block: 18px calc(var(--tabbar-h) + 28px + env(safe-area-inset-bottom, 0px));
+  padding-block: calc(18px + env(safe-area-inset-top, 0px)) calc(var(--tabbar-h) + 28px + env(safe-area-inset-bottom, 0px));
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -439,3 +439,14 @@ body.sheet-open .toast { bottom: auto; top: calc(env(safe-area-inset-top, 0px) +
 /* iOS gives date inputs an intrinsic width that overflows grid cells. */
 .field input { min-width: 0; max-width: 100%; }
 .field input[type='date'] { -webkit-appearance: none; appearance: none; display: block; text-align: left; }
+
+/* ---- safe area v3 ---- */
+/* Opaque strip under the iPhone status bar so content never scrolls beneath the clock. */
+body::before {
+  content: '';
+  position: fixed; top: 0; left: 0; right: 0;
+  height: env(safe-area-inset-top, 0px);
+  background: var(--bg);
+  z-index: 40;
+}
+.sheet { max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 12px); }
