@@ -2,7 +2,7 @@
 
 import type { Screen } from './types';
 import type { CycleSettings } from '../types';
-import { h, field, openSheet, parseNum, segmented, toast, fmtInt, fmtKg } from '../lib/ui';
+import { h, screenTitle, field, openSheet, parseNum, segmented, toast, fmtInt, fmtKg } from '../lib/ui';
 import { store } from '../store';
 import { daysBetween, fmtDayMonth, today } from '../lib/dates';
 import { targets, phaseOn } from '../lib/nutrition';
@@ -375,7 +375,7 @@ export const renderSettings: Screen = (root, ctx) => {
     renderSettings(root, ctx);
   };
   page.append(
-    h('header', { class: 'screen-head' }, h('h1', null, 'Plus')),
+    h('header', { class: 'screen-head' }, screenTitle('Plus')),
     profileCard(),
     cycleCard() ?? '',
     dataCard(),

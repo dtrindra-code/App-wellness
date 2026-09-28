@@ -4,8 +4,8 @@
 import type { Screen, ScreenCtx } from './types';
 import type { PlannedSession, Sport, Workout } from '../types';
 import { store, uid } from '../store';
-import { h, gearIcon, bar, toast, fmtKg, fmtInt, fmtDelta, parseNum, SPORT_GLYPH, SPORT_LABEL } from '../lib/ui';
-import { today, addDays, daysBetween, fmtLong, mondayOf, weekday } from '../lib/dates';
+import { h, gearIcon, screenTitle, starSticker, clipSticker, bar, toast, fmtKg, fmtInt, fmtDelta, parseNum, SPORT_GLYPH, SPORT_LABEL } from '../lib/ui';
+import { today, addDays, daysBetween, fmtLong, fmtDayMonth, mondayOf, weekday } from '../lib/dates';
 import { phaseOn, targets, totals, movingAverage, plannedWeight } from '../lib/nutrition';
 import { adaptedSessionsOn } from '../data/plan';
 import { adviceFor, cycleOn, cycleSettings, phaseLabel } from '../lib/cycle';
@@ -25,9 +25,7 @@ export const renderToday: Screen = (root, ctx) => {
   const date = today();
   const p = store.profile;
 
-  root.append(header(date, ctx));
-  const cyc = cycleLine(date, ctx);
-  if (cyc) root.append(cyc);
+  root.append(header(date, ctx), countdownCard(date, ctx));
 
   if (store.state.loaded && !p.onboarded) root.append(onboardingCard());
 
@@ -66,27 +64,43 @@ function cycleLine(date: string, ctx: ScreenCtx): HTMLElement | null {
 }
 
 function header(date: string, ctx: ScreenCtx): HTMLElement {
-  const p = store.profile;
-  const phase = phaseOn(date, p);
-  let title: string;
-  if (date < p.vacationStart) {
-    const n = daysBetween(date, p.vacationStart);
-    title = `J−${n} avant les Maldives`;
-  } else if (date < p.raceDate) {
-    const n = daysBetween(date, p.raceDate);
-    title = `J−${n} avant le half`;
-  } else if (date === p.raceDate) {
-    title = 'Jour J';
-  } else {
-    title = 'Half bouclé';
-  }
-  const dateLabel = fmtLong(date);
   return h('header', { class: 'screen-head' },
-    h('div', { class: 'stack', style: 'gap:4px' },
-      h('div', { class: 'eyebrow' }, `${phase.label} · ${dateLabel}`),
-      h('h1', null, title),
+    h('div', { class: 'stack', style: 'gap:6px' },
+      screenTitle('Aujourd’hui'),
+      h('p', { class: 'subtitle' }, fmtLong(date)),
     ),
     h('button', { class: 'btn-icon', type: 'button', 'aria-label': 'Réglages', onclick: () => ctx.go('settings') }, gearIcon()),
+  );
+}
+
+/** Countdown hero: the big number, a star sticker, the italic "avant les Maldives", then the cycle line. */
+function countdownCard(date: string, ctx: ScreenCtx): HTMLElement {
+  const p = store.profile;
+  const phase = phaseOn(date, p);
+  let big: string;
+  let rest: string | null = null;
+  let aside: string | null = null;
+  if (date < p.vacationStart) {
+    big = `J−${daysBetween(date, p.vacationStart)}`;
+    rest = 'avant les Maldives';
+    aside = `départ le ${fmtDayMonth(p.vacationStart)}`;
+  } else if (date < p.raceDate) {
+    big = `J−${daysBetween(date, p.raceDate)}`;
+    rest = 'avant le half';
+    aside = fmtDayMonth(p.raceDate);
+  } else if (date === p.raceDate) {
+    big = 'Jour J';
+  } else {
+    big = 'Half bouclé';
+  }
+  const cyc = cycleLine(date, ctx);
+  return h('section', { class: 'card td-hero' },
+    h('span', { class: 'chip accent', style: 'align-self:flex-start' }, phase.label),
+    h('div', { class: 'td-count' },
+      h('p', { class: 'td-big num' }, big, starSticker('td-star')),
+      rest ? h('p', { class: 'td-rest' }, h('span', { class: 'italic' }, rest), aside ? h('span', { class: 'small muted' }, aside) : null) : null,
+    ),
+    cyc,
   );
 }
 
@@ -102,7 +116,8 @@ function onboardingCard(): HTMLElement {
 
 function quoteCard(date: string): HTMLElement {
   const q = quoteFor(date);
-  return h('section', { class: 'card flat' },
+  return h('section', { class: 'card flat lined td-quote' },
+    clipSticker('td-clip'),
     h('p', { class: 'quote' }, q.text),
     q.author ? h('p', { class: 'quote-author' }, q.author) : null,
   );

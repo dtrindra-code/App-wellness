@@ -3,7 +3,7 @@
 import type { Screen } from './types';
 import type { FavoriteMeal, Meal, MealSlot, MealSource } from '../types';
 import { store, uid } from '../store';
-import { h, bar, openSheet, toast, field, segmented, pickImage, parseNum, fmtInt } from '../lib/ui';
+import { h, screenTitle, bar, openSheet, toast, field, segmented, pickImage, parseNum, fmtInt } from '../lib/ui';
 import type { Sheet } from '../lib/ui';
 import { today, addDays, fmtLong, range } from '../lib/dates';
 import { phaseOn, targets, totals } from '../lib/nutrition';
@@ -454,7 +454,7 @@ export const renderFood: Screen = (root) => {
 
   root.append(
     h('header', { class: 'screen-head' },
-      h('h1', null, 'Repas'),
+      screenTitle('Repas'),
       h('button', { class: 'btn primary', type: 'button', onclick: () => openAddSheet(date) }, 'Ajouter'),
     ),
     dayNav(date, now),

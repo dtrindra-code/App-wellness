@@ -3,7 +3,7 @@
 import type { Screen } from './types';
 import type { BodyComp, DayLog } from '../types';
 import { store } from '../store';
-import { h, fmtKg, fmtDelta, parseNum, openSheet, toast, field, segmented, pickImage } from '../lib/ui';
+import { h, screenTitle, fmtKg, fmtDelta, parseNum, openSheet, toast, field, segmented, pickImage } from '../lib/ui';
 import type { Sheet } from '../lib/ui';
 import { daysBetween, fmtDayMonth, fmtShort, today } from '../lib/dates';
 import { movingAverage, paceBreakdown, slopePerDay } from '../lib/nutrition';
@@ -196,13 +196,13 @@ function header(): HTMLElement {
   const p = store.profile;
   const pregnant = cycleSettings(p).pregnant;
   return h('header', { class: 'screen-head' },
-    h('div', null,
-      h('p', { class: 'eyebrow' },
+    h('div', { class: 'stack', style: 'gap:6px' },
+      screenTitle('Poids'),
+      h('p', { class: 'subtitle' },
         pregnant ? 'Mode grossesse · suivi pour info' : '',
         pregnant ? '' : `Palier ${fmtKg(p.goalWeight)} kg le ${fmtDayMonth(p.goalDate)}`,
         !pregnant && p.finalGoalWeight !== undefined && p.finalGoalWeight < p.goalWeight ? ` · objectif final ${fmtKg(p.finalGoalWeight)} kg` : '',
       ),
-      h('h1', null, 'Poids'),
     ),
   );
 }

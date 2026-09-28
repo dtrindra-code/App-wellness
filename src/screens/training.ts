@@ -3,7 +3,7 @@
 import type { Screen } from './types';
 import type { PlannedSession, Sport, Workout } from '../types';
 import { store, uid } from '../store';
-import { h, openSheet, toast, field, bar, parseNum, fmtInt, SPORT_LABEL, SPORT_GLYPH } from '../lib/ui';
+import { h, screenTitle, openSheet, toast, field, bar, parseNum, fmtInt, SPORT_LABEL, SPORT_GLYPH } from '../lib/ui';
 import type { Sheet } from '../lib/ui';
 import { addDays, dayShort, fmtDayMonth, fmtShort, mondayOf, range, today, weekday } from '../lib/dates';
 import { adaptSession, blockOn, cycleForecast, goodDays, season, sessionCapOn, weekOf } from '../data/plan';
@@ -92,7 +92,7 @@ function header(t: string): HTMLElement {
     eyebrow = [w ? `Semaine ${w.index}` : null, b?.name].filter(Boolean).join(' · ');
   }
   return h('header', { class: 'screen-head' },
-    h('div', null, h('div', { class: 'eyebrow' }, eyebrow), h('h1', null, 'Sport')),
+    h('div', { class: 'stack', style: 'gap:6px' }, screenTitle('Sport'), eyebrow ? h('p', { class: 'subtitle' }, eyebrow) : null),
   );
 }
 

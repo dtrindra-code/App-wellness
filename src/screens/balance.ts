@@ -5,7 +5,7 @@
 import type { Screen, ScreenCtx } from './types';
 import type { Profile, Wellbeing } from '../types';
 import { store } from '../store';
-import { h, gearIcon, field, parseNum, toast, fmtInt } from '../lib/ui';
+import { h, gearIcon, screenTitle, heartSticker, field, parseNum, toast, fmtInt } from '../lib/ui';
 import { today, addDays, daysBetween, fmtShort, fmtDayMonth, fmtLong, mondayOf } from '../lib/dates';
 import { cycleOn, cycleSettings, cycleModel, positionOn, adviceFor, phaseLabel, TTC_TIPS, PREGNANCY_NOTE } from '../lib/cycle';
 import type { CycleInfo } from '../lib/cycle';
@@ -45,8 +45,8 @@ function header(date: string, ctx: ScreenCtx, info: CycleInfo | null): HTMLEleme
   else if (info) eyebrow = `${phaseLabel(info.phase)} · J${info.day}`;
   return h('header', { class: 'screen-head' },
     h('div', { class: 'stack', style: 'gap:4px' },
-      h('div', { class: 'eyebrow' }, eyebrow),
-      h('h1', null, 'Équilibre'),
+      screenTitle('Équilibre'),
+      h('p', { class: 'subtitle' }, eyebrow),
     ),
     h('button', { class: 'btn-icon', 'aria-label': 'Réglages', type: 'button', onclick: () => ctx.go('settings') }, gearIcon()),
   );
@@ -235,7 +235,8 @@ function pillarsCard(date: string): HTMLElement {
     d.habits = hb;
   });
 
-  return h('section', { class: 'card' },
+  return h('section', { class: 'card bal-pillars' },
+    heartSticker('bal-heart'),
     h('div', { class: 'card-head' },
       h('h2', null, 'Mes piliers'),
       h('span', { class: 'num small muted' }, `${score}/${HABITS.length} aujourd’hui`),

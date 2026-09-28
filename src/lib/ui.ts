@@ -190,3 +190,62 @@ export function gearIcon(): SVGElement {
     s('path', { d: 'M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z' }),
   );
 }
+
+// ---------- scrapbook decor (seasoning: max 1–2 per screen, never over numbers or controls) ----------
+
+/**
+ * Bead letters: one round bead per character, like a friendship bracelet.
+ * Purely decorative (aria-hidden); pair it with real text for screen readers (see screenTitle).
+ * `pink` lists the bead indexes drawn pink (default: the first and one near the middle).
+ */
+export function beads(text: string, pink?: number[]): HTMLElement {
+  const chars = Array.from(text.toLocaleUpperCase('fr-FR'));
+  const letters = chars.filter((c) => c.trim() !== '').length;
+  const pinkSet = new Set(pink ?? (letters > 3 ? [0, Math.floor(letters / 2) + 1] : [0]));
+  const wrap = h('span', { class: 'beads', 'aria-hidden': 'true' });
+  let i = 0;
+  for (const c of chars) {
+    if (c.trim() === '') { wrap.append(h('span', { class: 'bead-sp' })); continue; }
+    wrap.append(h('b', pinkSet.has(i) ? { class: 'pink' } : null, c));
+    i++;
+  }
+  return wrap;
+}
+
+/** Screen title: the h1 keeps its real text (sr-only) and shows bead letters. */
+export function screenTitle(text: string, pink?: number[]): HTMLElement {
+  return h('h1', { class: 'bead-title' }, h('span', { class: 'sr-only' }, text), beads(text, pink));
+}
+
+/** Small gold star sticker (Today countdown). */
+export function starSticker(cls = ''): SVGElement {
+  return s('svg', { class: `sticker stk-star ${cls}`.trim(), viewBox: '0 0 48 48', 'aria-hidden': 'true' },
+    s('path', { class: 'stk-star-fill', d: 'M24 4.2c1.2 0 2.1.8 2.7 2l4.5 9.3 10.2 1.5c2.7.4 3.8 3.6 1.8 5.5l-7.4 7.2 1.8 10.1c.5 2.7-2.3 4.7-4.8 3.4L24 38.5l-8.9 4.8c-2.4 1.3-5.3-.7-4.8-3.4l1.8-10.1-7.4-7.2c-2-1.9-.9-5.1 1.8-5.5l10.2-1.5 4.5-9.3c.6-1.2 1.6-2 2.8-2z' }),
+    s('path', { class: 'stk-star-shine', d: 'M17 16.5c2-3.5 4-6.5 6-7', fill: 'none', 'stroke-width': 2, 'stroke-linecap': 'round' }),
+  );
+}
+
+/** Black binder clip holding a card (quote card). */
+export function clipSticker(cls = ''): SVGElement {
+  return s('svg', { class: `sticker stk-clip ${cls}`.trim(), viewBox: '0 0 60 54', 'aria-hidden': 'true' },
+    s('path', { class: 'stk-clip-wire', d: 'M21 30 L17 6 Q17 2 21 2 L39 2 Q43 2 43 6 L39 30', fill: 'none', 'stroke-width': 2.6, 'stroke-linejoin': 'round' }),
+    s('path', { class: 'stk-clip-body', d: 'M8 28 H52 L47 50 Q46 52 44 52 H16 Q14 52 13 50 Z' }),
+    s('path', { class: 'stk-clip-shine', d: 'M12 32 H48', 'stroke-width': 1.2 }),
+  );
+}
+
+let heartSeq = 0;
+/** Polka-dot heart sticker (Équilibre accent). */
+export function heartSticker(cls = ''): SVGElement {
+  const id = `stk-dots-${++heartSeq}`;
+  return s('svg', { class: `sticker stk-heart ${cls}`.trim(), viewBox: '0 0 40 36', 'aria-hidden': 'true' },
+    s('defs', null,
+      s('pattern', { id, width: 6, height: 6, patternUnits: 'userSpaceOnUse' },
+        s('rect', { class: 'stk-heart-bg', width: 6, height: 6 }),
+        s('circle', { class: 'stk-heart-dot', cx: 1.5, cy: 1.5, r: 1.2 }),
+        s('circle', { class: 'stk-heart-dot', cx: 4.5, cy: 4.5, r: 1.2 }),
+      ),
+    ),
+    s('path', { class: 'stk-heart-shape', fill: `url(#${id})`, 'stroke-width': 1.2, d: 'M20 34C8 25 2 18.5 2 11.3 2 5.8 6.3 2 11.2 2c3.6 0 6.7 2 8.8 5.1C22.1 4 25.2 2 28.8 2 33.7 2 38 5.8 38 11.3 38 18.5 32 25 20 34z' }),
+  );
+}
