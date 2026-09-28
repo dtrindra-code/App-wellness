@@ -61,6 +61,7 @@ function intensityChip(s: PlannedSession): HTMLElement {
 function workoutSub(w: Workout): string {
   const parts = [fmtMin(w.minutes)];
   if (w.distanceKm) parts.push(`${fmtKm(w.distanceKm)} km`);
+  if (w.steps) parts.push(`${w.steps.toLocaleString('fr-FR')} pas`);
   if (w.rpe) parts.push(`effort ${w.rpe}/10`);
   return parts.join(' · ');
 }
@@ -298,6 +299,18 @@ function deleteButton(l: LoggedWorkout, onDone: () => void): HTMLElement {
   return btn;
 }
 
+const WITH_STEPS: Sport[] = ['walk', 'run', 'other'];
+/** km/h used to estimate a duration from a distance. */
+const SPEED: Partial<Record<Sport, number>> = { walk: 5, run: 8, bike: 18, swim: 2 };
+
+/** Minutes estimated from steps (≈100 pas/min en marche, 160 en course) or distance. */
+function estimateMinutes(sport: Sport, km?: number, steps?: number): number {
+  if (steps) return Math.round(steps / (sport === 'run' ? 160 : 100));
+  const v = SPEED[sport];
+  if (km && km > 0 && v) return Math.round((km / v) * 60);
+  return 0;
+}
+
 export interface LogPrefill {
   date?: string;
   sport?: Sport;
@@ -315,13 +328,16 @@ export function openLogSheet(pre: LogPrefill = {}) {
 
   const dateIn = h('input', { type: 'date', value: pre.date ?? t, max: t });
   const minIn = h('input', { type: 'text', inputMode: 'numeric', value: pre.minutes ? String(pre.minutes) : sport === 'basket' ? '90' : '', placeholder: '30', autocomplete: 'off' });
-  const kmIn = h('input', { type: 'text', inputMode: 'decimal', value: '', placeholder: 'optionnel', autocomplete: 'off' });
+  const kmIn = h('input', { type: 'text', inputMode: 'decimal', value: '', placeholder: 'ex. 5', autocomplete: 'off' });
+  const stepsIn = h('input', { type: 'text', inputMode: 'numeric', value: '', placeholder: 'ex. 8000', autocomplete: 'off' });
   const noteIn = h('textarea', { placeholder: 'Comment tu t’es senti·e ? (optionnel)' });
   const err = h('p', { class: 'small tone-bad', role: 'alert' });
 
   const sportWrap = h('div', { class: 'row wrap', style: 'gap:6px' });
   const rpeWrap = h('div', { class: 'row wrap', style: 'gap:6px' });
   const kmField = field('Distance (km)', kmIn);
+  const stepsField = field('Pas', stepsIn);
+  minIn.placeholder = 'ex. 30';
 
   const drawSports = () => {
     sportWrap.replaceChildren(...SPORTS.map((sp) =>
@@ -339,6 +355,7 @@ export function openLogSheet(pre: LogPrefill = {}) {
       }, SHORT_LABEL[sp]),
     ));
     kmField.style.display = WITH_DISTANCE.includes(sport) ? '' : 'none';
+    stepsField.style.display = WITH_STEPS.includes(sport) ? '' : 'none';
   };
   const drawRpe = () => {
     rpeWrap.replaceChildren(...Array.from({ length: 10 }, (_, i) => i + 1).map((n) =>
@@ -355,12 +372,18 @@ export function openLogSheet(pre: LogPrefill = {}) {
   drawRpe();
 
   const save = () => {
-    const minutes = Math.round(parseNum(minIn.value) ?? 0);
-    if (!(minutes > 0)) { err.textContent = 'Indique la durée en minutes.'; return; }
+    const typed = Math.round(parseNum(minIn.value) ?? 0);
+    const km = WITH_DISTANCE.includes(sport) ? parseNum(kmIn.value) : undefined;
+    const stepsRaw = WITH_STEPS.includes(sport) ? parseNum(stepsIn.value.replace(/\s/g, '')) : undefined;
+    const steps = stepsRaw && stepsRaw > 0 ? Math.round(stepsRaw) : undefined;
+    // Any one of duration, distance or steps is enough; missing minutes are estimated.
+    const minutes = typed > 0 ? typed : estimateMinutes(sport, km, steps);
+    if (!(minutes > 0)) { err.textContent = WITH_DISTANCE.includes(sport) || WITH_STEPS.includes(sport) ? 'Indique au moins une durée, une distance ou un nombre de pas.' : 'Indique la durée en minutes.'; return; }
     if (minutes > 720) { err.textContent = 'Plus de 12 h ? Vérifie la durée.'; return; }
     const date = dateIn.value || t;
-    const km = WITH_DISTANCE.includes(sport) ? parseNum(kmIn.value) : undefined;
     const w: Workout = { id: uid(), sport, minutes };
+    if (!(typed > 0)) w.estimated = true;
+    if (steps) w.steps = steps;
     if (rpe) w.rpe = rpe;
     const note = noteIn.value.trim();
     if (note) w.note = note;
@@ -378,8 +401,9 @@ export function openLogSheet(pre: LogPrefill = {}) {
 
   const body = h('div', { class: 'stack' },
     h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Sport'), sportWrap),
-    h('div', { class: 'grid-2' }, field('Date', dateIn), field('Minutes', minIn)),
-    kmField,
+    field('Date', dateIn),
+    h('p', { class: 'small muted' }, 'Remplis ce que tu as : durée, distance ou pas.'),
+    h('div', { class: 'log-metrics' }, field('Durée (min)', minIn), kmField, stepsField),
     h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Effort ressenti (1 = très facile, 10 = à fond)'), rpeWrap),
     field('Note', noteIn),
     err,
