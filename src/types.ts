@@ -110,6 +110,9 @@ export interface Workout {
   /** Done as the short "mini" version. */
   mini?: boolean;
   distanceKm?: number;
+  steps?: number;
+  /** True when minutes were estimated from distance or steps (no duration entered). */
+  estimated?: boolean;
 }
 
 export interface DayLog {

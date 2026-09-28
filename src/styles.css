@@ -433,3 +433,9 @@ body.sheet-open .toast { bottom: auto; top: calc(env(safe-area-inset-top, 0px) +
 .set-remind { padding: 8px 12px; border-radius: var(--r-sm); background: var(--accent-soft); color: var(--ink); }
 .w-cycle-note { color: var(--warn); }
 /* ---- /settings, onboarding & poids v2 ---- */
+
+/* ---- log form v3 ---- */
+.log-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: var(--gap); }
+/* iOS gives date inputs an intrinsic width that overflows grid cells. */
+.field input { min-width: 0; max-width: 100%; }
+.field input[type='date'] { -webkit-appearance: none; appearance: none; display: block; text-align: left; }
