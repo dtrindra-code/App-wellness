@@ -1,9 +1,13 @@
-// "Repas" screen: what's left in today's budget first, then the meals, then fast ways to add one.
+// "Repas" screen, in sections: TON BUDGET (kcal-left bubble, details folded) · TES REPAS (one row
+// per slot, "Ajouter" prominent) · DES IDÉES (swipeable cards) · TES FAVORIS (folded).
 
 import type { Screen } from './types';
 import type { FavoriteMeal, Meal, MealSlot, MealSource } from '../types';
 import { store, uid } from '../store';
-import { h, bar, openSheet, toast, field, segmented, pickImage, parseNum, fmtInt } from '../lib/ui';
+import {
+  h, screenTitle, bar, openSheet, toast, field, segmented, pickImage, parseNum, fmtInt,
+  sectionTitle, infoRow, carousel, tipCard, disclosure, keyBubble, ICON,
+} from '../lib/ui';
 import type { Sheet } from '../lib/ui';
 import { today, addDays, fmtLong, range } from '../lib/dates';
 import { phaseOn, targets, totals } from '../lib/nutrition';
@@ -15,7 +19,6 @@ import type { PhaseAdvice } from '../lib/cycle';
 let selectedDate = today();
 /** Day the screen last rendered: when the app resumes on a new day, jump back to today. */
 let lastNow = selectedDate;
-let favOpen = false;
 let aiImages = false;
 void aiImagesAvailable().then((v) => { aiImages = v; }).catch(() => { aiImages = false; });
 
@@ -212,7 +215,8 @@ interface AiMeal { name?: string; kcal?: number | string | null; protein?: numbe
 
 // ---------- add sheet ----------
 
-function openAddSheet(date: string) {
+function openAddSheet(date: string, preferred?: MealSlot) {
+  const slot0 = (): MealSlot => preferred ?? defaultSlot();
   const view = h('div', { class: 'stack' });
   let controller: AbortController | null = null;
   const sheet: Sheet = openSheet('Ajouter un repas', view, { onClose: () => controller?.abort() });
@@ -277,7 +281,7 @@ function openAddSheet(date: string) {
           class: 'list-row', type: 'button',
           style: 'background:none;border-left:0;border-right:0;border-top:0;text-align:left;cursor:pointer;width:100%',
           onclick: () => {
-            const slot = defaultSlot();
+            const slot = slot0();
             void addMeal(date, slot, i, 'manuel');
             done(`${i.name} ajouté · ${SLOT_LABEL[slot]}`);
           },
@@ -300,7 +304,7 @@ function openAddSheet(date: string) {
       { value: '1', label: '1 portion' },
       { value: '1.5', label: '1,5 portion' },
     ], '1', () => drawPreview());
-    const slot = segPicker(slotOptions(), defaultSlot());
+    const slot = segPicker(slotOptions(), slot0());
     const drawPreview = () => { preview.textContent = macroLine(cleanValues(f, Number(mult.get()))); };
     drawPreview();
     view.replaceChildren(
@@ -319,7 +323,7 @@ function openAddSheet(date: string) {
   }
 
   function showManual(initial: Partial<MealValues>) {
-    const form = mealForm(initial, defaultSlot());
+    const form = mealForm(initial, slot0());
     const favBox = h('input', { type: 'checkbox' });
     view.replaceChildren(
       back(),
@@ -378,7 +382,7 @@ function openAddSheet(date: string) {
   }
 
   function showConfirm(kind: 'hellofresh' | 'plate', initial: Partial<MealValues>, confidence?: string) {
-    const form = mealForm(initial, kind === 'hellofresh' ? 'diner' : defaultSlot());
+    const form = mealForm(initial, preferred ?? (kind === 'hellofresh' ? 'diner' : defaultSlot()));
     const favBox = h('input', { type: 'checkbox', checked: kind === 'hellofresh' });
     const note = kind === 'hellofresh'
       ? (initial.kcal === undefined ? 'Je n’ai pas réussi à lire les calories. Complète à la main.' : 'Vérifie les valeurs par portion avant d’ajouter.')
@@ -454,16 +458,19 @@ export const renderFood: Screen = (root) => {
 
   root.append(
     h('header', { class: 'screen-head' },
-      h('h1', null, 'Repas'),
+      screenTitle('Repas'),
       h('button', { class: 'btn primary', type: 'button', onclick: () => openAddSheet(date) }, 'Ajouter'),
     ),
     dayNav(date, now),
+    sectionTitle('Ton budget'),
     summaryCard(date),
+    sectionTitle(date === now ? 'Tes repas du jour' : 'Tes repas'),
     mealsCard(date),
+    sectionTitle('Des idées'),
+    ideasCarousel(date),
+    sectionTitle('Tes favoris'),
+    favoritesCard(),
   );
-  const week = weekLine(date);
-  if (week) root.append(week);
-  root.append(favoritesCard());
 };
 
 function dayNav(date: string, now: string): HTMLElement {
@@ -503,80 +510,78 @@ function summaryCard(date: string): HTMLElement {
   const over = rest < 0;
   const phase = phaseOn(date, p);
 
-  const head = over
-    ? h('div', { class: 'stack', style: 'gap:4px' },
-        h('div', { class: 'row', style: 'align-items:baseline;gap:6px' },
-          h('span', { class: 'big-number tone-warn' }, `+${fmtInt(-rest)}`),
-          h('span', { class: 'muted' }, 'kcal au-dessus'),
-        ),
-        h('p', { class: 'small muted' }, 'Pas grave, on lisse sur la semaine.'),
-      )
-    : h('div', { class: 'row', style: 'align-items:baseline;gap:6px' },
-        h('span', { class: 'muted' }, 'reste'),
-        h('span', { class: 'big-number' }, fmtInt(rest)),
-        h('span', { class: 'muted' }, 'kcal'),
-      );
-
   const barRow = (label: string, value: string, ratio: number, tone: 'accent' | 'good' | 'warn') =>
-    h('div', { class: 'stack', style: 'gap:5px' },
-      h('div', { class: 'row between small' }, h('span', null, label), h('span', { class: 'num muted' }, value)),
+    h('div', { class: 'td-mini' },
+      h('div', { class: 'td-mini-top' }, h('span', { style: 'font-weight:700' }, label), h('span', { class: 'num muted' }, value)),
       bar(ratio, tone),
     );
 
   const protRatio = t.protein ? eaten.protein / t.protein : 0;
-  const rows: HTMLElement[] = [
-    barRow('Calories', `${fmtInt(eaten.kcal)} / ${fmtInt(t.budget)}`, t.budget ? eaten.kcal / t.budget : 0, over ? 'warn' : 'accent'),
+  const side: HTMLElement[] = [
     barRow('Protéines', `${fmtG(eaten.protein)} / ${fmtInt(t.protein)} g`, protRatio, protRatio >= 1 ? 'good' : 'accent'),
   ];
   if (t.carbsMax !== undefined) {
-    rows.push(barRow('Glucides', `${fmtG(eaten.carbs)} / ${fmtInt(t.carbsMax)} g max`, eaten.carbs / t.carbsMax, eaten.carbs > t.carbsMax ? 'warn' : 'accent'));
+    side.push(barRow('Glucides', `${fmtG(eaten.carbs)} / ${fmtInt(t.carbsMax)} g max`, eaten.carbs / t.carbsMax, eaten.carbs > t.carbsMax ? 'warn' : 'accent'));
   }
 
-  return h('section', { class: 'card' },
-    head,
-    t.sportBonus > 0 || cycleExtra > 0
-      ? h('p', { class: 'small muted' },
-          `Budget ${fmtInt(t.budget)} kcal`,
-          t.sportBonus > 0 ? `, dont +${fmtInt(t.sportBonus)} grâce au sport` : '',
-          cycleExtra > 0 ? ` · +${fmtInt(cycleExtra)} kcal (cycle)` : '',
-          '.')
-      : null,
-    ...rows,
-    h('p', { class: 'small muted' }, `Lipides ${fmtG(eaten.fat)} g`),
-    h('p', { class: 'small' }, h('span', { class: 'eyebrow' }, phase.label), ' ', phase.hint),
-    advice ? h('p', { class: 'small muted' }, h('span', { class: 'eyebrow' }, advice.label), ' ', advice.food) : null,
+  return h('section', { class: 'card ux solo' },
+    h('div', { class: 'td-energy' },
+      keyBubble(fmtInt(Math.abs(rest)), 'kcal', over ? 'en plus' : 'restantes', over ? 'warn' : 'pink'),
+      h('div', { class: 'td-energy-side' }, side),
+    ),
+    over ? h('p', { class: 'small muted', style: 'text-align:center' }, 'Pas grave, on lisse sur la semaine.') : null,
+    disclosure('Voir le détail', () => [
+      barRow('Calories', `${fmtInt(eaten.kcal)} / ${fmtInt(t.budget)}`, t.budget ? eaten.kcal / t.budget : 0, over ? 'warn' : 'accent'),
+      h('p', { class: 'small muted num' },
+        `Budget ${fmtInt(t.budget)} kcal`,
+        t.sportBonus > 0 ? `, dont +${fmtInt(t.sportBonus)} grâce au sport` : '',
+        cycleExtra > 0 ? ` · +${fmtInt(cycleExtra)} kcal (cycle)` : '',
+        ` · lipides ${fmtG(eaten.fat)} g.`),
+      weekLine(date),
+      infoRow({ icon: ICON.plane, title: phase.label, detail: phase.hint }),
+      advice ? infoRow({ icon: ICON.cycle, title: advice.label, detail: advice.food }) : null,
+    ], 'food-budget'),
   );
 }
 
+const SLOT_ICON: Record<MealSlot, string> = {
+  'petit-dej': ICON.sun,
+  dejeuner: ICON.fork,
+  collation: ICON.leaf,
+  diner: ICON.moon,
+};
+
 function mealsCard(date: string): HTMLElement {
   const day = store.getDay(date);
-  if (!day.meals.length) {
-    return h('section', { class: 'card' },
-      h('p', { class: 'empty' }, date === today() ? 'Rien de noté pour l’instant. Touche « Ajouter ».' : 'Rien de noté ce jour-là.'),
+  const slots = SLOTS.map((slot) => {
+    const meals = day.meals.filter((m) => m.slot === slot);
+    const kcal = meals.reduce((a, m) => a + (m.kcal || 0), 0);
+    return h('div', { class: 'food-slot' },
+      infoRow({
+        icon: SLOT_ICON[slot],
+        title: SLOT_LABEL[slot],
+        detail: meals.length ? h('span', { class: 'num' }, `${fmtInt(kcal)} kcal`) : 'Rien de noté',
+        trail: h('button', {
+          class: 'btn-icon food-add', type: 'button', 'aria-label': `Ajouter : ${SLOT_LABEL[slot]}`,
+          onclick: () => openAddSheet(date, slot),
+        }, '+'),
+      }),
+      meals.length
+        ? h('div', { class: 'list food-meals' }, meals.map((m) =>
+            h('button', { class: 'list-row food-meal', type: 'button', onclick: () => openEditSheet(date, m) },
+              h('span', { class: 'main' },
+                h('span', { class: 'title' }, m.name),
+                m.protein !== undefined ? h('span', { class: 'sub' }, `${fmtG(m.protein)} g prot`) : null,
+              ),
+              h('span', { class: 'num' }, `${fmtInt(m.kcal || 0)}`, h('span', { class: 'muted small' }, ' kcal')),
+            )))
+        : null,
     );
-  }
-  const groups = SLOTS
-    .map((slot) => ({ slot, meals: day.meals.filter((m) => m.slot === slot) }))
-    .filter((g) => g.meals.length);
-  return h('section', { class: 'card' },
-    groups.map((g) => h('div', { class: 'stack', style: 'gap:0' },
-      h('div', { class: 'row between' },
-        h('span', { class: 'eyebrow' }, SLOT_LABEL[g.slot]),
-        h('span', { class: 'eyebrow num' }, `${fmtInt(g.meals.reduce((s, m) => s + (m.kcal || 0), 0))} kcal`),
-      ),
-      h('div', { class: 'list' }, g.meals.map((m) =>
-        h('div', {
-          class: 'list-row', role: 'button', tabIndex: 0, style: 'cursor:pointer',
-          onclick: () => openEditSheet(date, m),
-          onkeydown: (e: KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openEditSheet(date, m); } },
-        },
-          h('div', { class: 'main' },
-            h('div', { class: 'title' }, m.name),
-            m.protein !== undefined ? h('div', { class: 'sub' }, `${fmtG(m.protein)} g prot`) : null,
-          ),
-          h('span', { class: 'num' }, `${fmtInt(m.kcal || 0)}`, h('span', { class: 'muted small' }, ' kcal')),
-        ))),
-    )),
+  });
+  return h('section', { class: 'card ux solo' },
+    slots,
+    h('button', { class: 'btn primary block food-big', type: 'button', onclick: () => openAddSheet(date) }, 'Ajouter un repas'),
+    !day.meals.length && date !== today() ? h('p', { class: 'small muted', style: 'text-align:center' }, 'Rien de noté ce jour-là.') : null,
   );
 }
 
@@ -586,18 +591,51 @@ function weekLine(date: string): HTMLElement | null {
     .filter((d) => d.meals.length);
   if (!days.length) return null;
   const avg = days.reduce((s, d) => s + totals(d).kcal, 0) / days.length;
-  return h('p', { class: 'small muted', style: 'text-align:center' },
+  return h('p', { class: 'small muted' },
     'Moyenne 7 j : ', h('span', { class: 'num' }, fmtInt(avg)), ' kcal / jour',
     days.length < 7 ? ` (${days.length} j notés)` : '',
   );
 }
 
+/** One swipeable card per idea; "En savoir plus" shows the macros and adds it to a slot. */
+function ideasCarousel(date: string): HTMLElement {
+  const cards = ideasFor(date).map((i) => tipCard({
+    icon: i.lowCarb ? ICON.leaf : ICON.fork,
+    title: i.name,
+    text: `${fmtInt(i.kcal)} kcal · ${fmtG(i.protein ?? 0)} g de protéines`,
+    more: () => openIdeaSheet(date, i),
+  }));
+  return carousel(cards, 'food-ideas');
+}
+
+function openIdeaSheet(date: string, i: Idea) {
+  const slot = segPicker(slotOptions(), defaultSlot());
+  const sheet = openSheet(i.name, h('div', { class: 'stack' },
+    h('p', { class: 'small muted' }, macroLine(i)),
+    h('p', { class: 'small' }, FOLATE_IDEAS.includes(i) ? 'Riche en folates : un bon choix en essai bébé.' : i.lowCarb ? 'Peu de glucides, riche en protéines.' : 'Un peu plus de glucides pour les jours d’entraînement.'),
+    field('Moment', slot.el),
+    h('button', {
+      class: 'btn primary block', type: 'button',
+      onclick: () => {
+        void addMeal(date, slot.get(), i, 'manuel');
+        sheet.close();
+        toast(`${i.name} ajouté · ${SLOT_LABEL[slot.get()]}`);
+      },
+    }, 'Ajouter'),
+  ));
+}
+
 function favoritesCard(): HTMLElement {
   const favs = store.state.favorites.slice().sort((a, b) => a.name.localeCompare(b.name, 'fr'));
-  const details = h('details', { class: 'card flat', open: favOpen },
-    h('summary', { style: 'cursor:pointer;font-weight:700' }, `Mes favoris (${favs.length})`),
+  const hf = favs.filter((f) => f.hellofresh).length;
+  return h('section', { class: 'card ux solo' },
+    infoRow({
+      icon: ICON.heart,
+      title: favs.length ? `${favs.length} repas favori${favs.length > 1 ? 's' : ''}` : 'Pas encore de favori',
+      detail: favs.length ? (hf ? `dont ${hf} HelloFresh` : 'Prêts à ajouter en un geste') : 'Scanne une fiche HelloFresh ou enregistre un repas.',
+    }),
     favs.length
-      ? h('div', { class: 'list' }, favs.map((f) =>
+      ? disclosure('Voir mes favoris', () => h('div', { class: 'list' }, favs.map((f) =>
           h('div', { class: 'list-row' },
             h('div', { class: 'main' },
               h('div', { class: 'title' }, f.name),
@@ -608,9 +646,7 @@ function favoritesCard(): HTMLElement {
               void store.saveFavorites(store.state.favorites.filter((x) => x.id !== f.id));
               toast('Favori retiré');
             }, 'btn sm danger'),
-          )))
-      : h('p', { class: 'empty' }, 'Tes repas enregistrés en favori apparaîtront ici.'),
+          ))), 'food-favs')
+      : null,
   );
-  details.addEventListener('toggle', () => { favOpen = details.open; });
-  return details;
 }

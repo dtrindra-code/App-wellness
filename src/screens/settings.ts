@@ -1,8 +1,12 @@
-// "Plus" screen: profile summary, cycle settings, iPhone notifications guide, backup, upcoming features, theme.
+// "Plus" screen, in sections of info rows: TON PROFIL · TON CYCLE · TES DONNÉES · NOTIFICATIONS ·
+// APPARENCE · BIENTÔT. Long explanations are folded.
 
 import type { Screen } from './types';
 import type { CycleSettings } from '../types';
-import { h, field, openSheet, parseNum, segmented, toast, fmtInt, fmtKg } from '../lib/ui';
+import {
+  h, screenTitle, field, openSheet, parseNum, segmented, toast, fmtInt, fmtKg,
+  sectionTitle, actionLink, infoRow, disclosure, ICON,
+} from '../lib/ui';
 import { store } from '../store';
 import { daysBetween, fmtDayMonth, today } from '../lib/dates';
 import { targets, phaseOn } from '../lib/nutrition';
@@ -93,30 +97,20 @@ function profileCard(): HTMLElement {
     p.finalGoalWeight !== undefined && p.finalGoalWeight < p.goalWeight ? `objectif final ${fmtKg(p.finalGoalWeight)} kg` : null,
   ].filter(Boolean);
 
-  return h('section', { class: 'card' },
-    h('div', { class: 'card-head' },
-      h('h2', null, 'Profil'),
-      h('button', { type: 'button', class: 'btn ghost sm', onclick: () => openProfileEditor() }, 'Modifier'),
-    ),
-    h('p', null, bits.join(' · ')),
-    !p.sex || !p.age
-      ? h('p', { class: 'small muted' }, 'Ajoute ton sexe et ton âge pour des calories plus justes.')
-      : null,
-    h('div', { class: 'grid-2' },
-      h('div', { class: 'stat' },
-        h('span', { class: 'value' }, fmtInt(t.kcal), h('small', null, 'kcal')),
-        h('span', { class: 'label' }, `Cible du jour · ${phase.label}`),
-      ),
-      h('div', { class: 'stat' },
-        h('span', { class: 'value' }, fmtInt(t.maintenance), h('small', null, 'kcal')),
-        h('span', { class: 'label' }, 'Maintien estimé'),
-      ),
-    ),
-    h('p', { class: 'small muted' },
+  return h('section', { class: 'card ux' },
+    infoRow({
+      icon: ICON.heart,
+      title: 'Mes infos',
+      detail: !p.sex || !p.age ? `${bits.join(' · ')}. Ajoute ton sexe et ton âge pour des calories plus justes.` : bits.join(' · '),
+    }),
+    infoRow({ icon: ICON.fork, title: h('span', { class: 'num' }, `${fmtInt(t.kcal)} kcal`), detail: `Cible du jour · ${phase.label}` }),
+    infoRow({ icon: ICON.sun, title: h('span', { class: 'num' }, `${fmtInt(t.maintenance)} kcal`), detail: 'Maintien estimé' }),
+    disclosure('Comment c’est calculé', () => h('p', { class: 'small muted' },
       cs.pregnant
         ? 'Mode grossesse : la cible est ton maintien estimé, sans déficit.'
         : `Mifflin-St Jeor × ton activité, moins un déficit selon la phase. Jamais sous ${fmtInt(t.floor)} kcal (le plus haut entre ${cs.ttc ? '1 400' : '1 200'} et ton métabolisme de base). Ce sont des estimations.`,
-    ),
+    ), 'set-calc'),
+    actionLink('Modifier mon profil', () => openProfileEditor()),
   );
 }
 
@@ -129,27 +123,22 @@ function notificationsCard(): HTMLElement {
     'Ajoute « Obtenir un élément de la liste » : Élément aléatoire.',
     'Ajoute « Afficher la notification » avec cet élément. Terminé.',
   ];
-  return h('section', { class: 'card' },
-    h('h2', null, 'Notifications (iPhone)'),
+  return h('section', { class: 'card ux solo' },
     h('p', { class: 'small muted' },
-      'L’app ne peut pas t’envoyer de notifications elle-même. ',
-      'C’est l’app Raccourcis de ton iPhone qui s’en charge, avec une automatisation. ',
-      'Ça se règle une fois, en deux minutes.',
+      'L’app ne peut pas t’envoyer de notifications elle-même : c’est l’app Raccourcis de ton iPhone qui s’en charge. Ça se règle une fois, en deux minutes.',
     ),
-    h('h3', null, 'Une citation chaque matin'),
-    h('ol', { class: 'set-steps' }, steps.map((s) => h('li', null, s))),
-    h('button', {
-      type: 'button',
-      class: 'btn primary block',
-      onclick: () => void copy(QUOTES_FOR_SHORTCUT, 'quotes', 'Citations copiées'),
-    }, `Copier les ${QUOTES.length} citations`),
-    fallbackBox('quotes'),
-    h('h3', null, 'Un rappel le soir'),
-    h('p', { class: 'small' },
-      'Même chose avec une deuxième automatisation à 20:30, sans liste : juste « Afficher la notification » avec le texte « Pense à noter ta journée ».',
-    ),
-    h('h3', null, 'L’app sur ton écran d’accueil'),
-    h('p', { class: 'small' }, 'Dans Safari : bouton Partager, puis « Sur l’écran d’accueil ».'),
+    infoRow({ icon: ICON.sun, title: 'Une citation chaque matin', detail: '08:00, avec une automatisation Raccourcis' }),
+    disclosure('Voir les étapes', () => [
+      h('ol', { class: 'set-steps' }, steps.map((st) => h('li', null, st))),
+      h('button', {
+        type: 'button',
+        class: 'btn primary block',
+        onclick: () => void copy(QUOTES_FOR_SHORTCUT, 'quotes', 'Citations copiées'),
+      }, `Copier les ${QUOTES.length} citations`),
+      fallbackBox('quotes'),
+    ], 'set-notif'),
+    infoRow({ icon: ICON.moon, title: 'Un rappel le soir', detail: 'Une 2e automatisation à 20:30 : « Afficher la notification » avec « Pense à noter ta journée ».' }),
+    infoRow({ icon: ICON.plane, title: 'L’app sur ton écran d’accueil', detail: 'Dans Safari : Partager, puis « Sur l’écran d’accueil ».' }),
   );
 }
 
@@ -181,8 +170,7 @@ function cycleCard(): HTMLElement | null {
   const p = store.profile;
   if (p.sex === 'm') return null;
   const cs = cycleSettings(p);
-  return h('section', { class: 'card' },
-    h('h2', null, 'Cycle'),
+  return h('section', { class: 'card ux solo' },
     toggleRow('Suivre mon cycle', cs.tracking, (v) => saveCycle({ tracking: v })),
     cs.tracking
       ? [
@@ -252,13 +240,13 @@ function dataCard(): HTMLElement {
   const last = readLastExport();
   const age = last ? daysBetween(last, today()) : null;
   const remind = days > 0 && (age === null || age > 14);
-  return h('section', { class: 'card' },
-    h('h2', null, 'Sauvegarde'),
-    h('p', { class: 'small' }, 'Tes données restent sur ce téléphone. Pense à exporter une sauvegarde de temps en temps.'),
-    h('p', { class: 'small muted' },
-      `${days} jour${days > 1 ? 's' : ''} noté${days > 1 ? 's' : ''}, ${store.state.favorites.length} repas favori${store.state.favorites.length > 1 ? 's' : ''}. `,
-      `Dernière sauvegarde : ${last ? fmtDayMonth(last) : 'pas encore'}.`,
-    ),
+  return h('section', { class: 'card ux solo' },
+    infoRow({
+      icon: ICON.battery,
+      title: `${days} jour${days > 1 ? 's' : ''} noté${days > 1 ? 's' : ''} · ${store.state.favorites.length} favori${store.state.favorites.length > 1 ? 's' : ''}`,
+      detail: `Dernière sauvegarde : ${last ? fmtDayMonth(last) : 'pas encore'}`,
+    }),
+    h('p', { class: 'small muted' }, 'Tes données restent sur ce téléphone. Pense à exporter une sauvegarde de temps en temps.'),
     remind
       ? h('p', { class: 'small set-remind' }, last
           ? 'Ta dernière sauvegarde date de plus de deux semaines : un petit export te met à l’abri.'
@@ -268,14 +256,15 @@ function dataCard(): HTMLElement {
       h('button', { type: 'button', class: 'btn primary', onclick: () => void exportBackup() }, 'Exporter'),
       h('button', { type: 'button', class: 'btn', onclick: openImport }, 'Importer'),
     ),
-    h('button', {
-      type: 'button',
-      class: 'btn ghost sm',
-      style: 'align-self:flex-start',
-      onclick: () => void copy(store.exportJSON(), 'export', 'Sauvegarde copiée').then((ok) => { if (ok) markExported(); }),
-    }, 'Copier le texte à la place'),
+    disclosure('Autres options', () => [
+      h('button', {
+        type: 'button',
+        class: 'btn block',
+        onclick: () => void copy(store.exportJSON(), 'export', 'Sauvegarde copiée').then((ok) => { if (ok) markExported(); }),
+      }, 'Copier le texte à la place'),
+      h('p', { class: 'small muted' }, 'Sur iPhone, depuis l’écran d’accueil : « Enregistrer dans Fichiers » pour la garder sur iCloud.'),
+    ], 'set-data'),
     fallbackBox('export'),
-    h('p', { class: 'small muted' }, 'Sur iPhone, depuis l’écran d’accueil : « Enregistrer dans Fichiers » pour la garder sur iCloud.'),
   );
 }
 
@@ -340,24 +329,13 @@ function soonCard(): HTMLElement {
     ['Notifications push', 'Des rappels directement depuis l’app, sans Raccourcis.'],
     ['Lecture photo par IA', 'Optionnelle, avec une clé personnelle.'],
   ];
-  return h('section', { class: 'card flat' },
-    h('h2', null, 'Bientôt'),
-    h('div', { class: 'list' },
-      items.map(([title, sub]) =>
-        h('div', { class: 'list-row' },
-          h('div', { class: 'main muted' },
-            h('div', { class: 'title' }, title),
-            h('div', { class: 'sub' }, sub),
-          ),
-        ),
-      ),
-    ),
+  return h('section', { class: 'card ux solo flat set-soon' },
+    items.map(([title, sub]) => infoRow({ icon: ICON.spark, title, detail: sub })),
   );
 }
 
 function themeCard(): HTMLElement {
-  return h('section', { class: 'card' },
-    h('h2', null, 'Thème'),
+  return h('section', { class: 'card ux solo' },
     segmented<Theme>(
       [{ value: 'auto', label: 'Auto' }, { value: 'light', label: 'Clair' }, { value: 'dark', label: 'Sombre' }],
       theme,
@@ -374,14 +352,20 @@ export const renderSettings: Screen = (root, ctx) => {
     root.replaceChildren();
     renderSettings(root, ctx);
   };
+  const cycle = cycleCard();
   page.append(
-    h('header', { class: 'screen-head' }, h('h1', null, 'Plus')),
+    h('header', { class: 'screen-head' }, screenTitle('Plus')),
+    sectionTitle('Ton profil'),
     profileCard(),
-    cycleCard() ?? '',
+    ...(cycle ? [sectionTitle('Ton cycle'), cycle] : []),
+    sectionTitle('Tes données'),
     dataCard(),
+    sectionTitle('Notifications'),
     notificationsCard(),
-    soonCard(),
+    sectionTitle('Apparence'),
     themeCard(),
+    sectionTitle('Bientôt'),
+    soonCard(),
   );
   root.append(page);
 };
