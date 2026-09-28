@@ -1,9 +1,13 @@
-// "Poids" screen: trend first (7-day average), then chart, input, body comp, history.
+// "Poids" screen, in sections: TA TENDANCE (7-day average bubble, details folded) · TA COURBE
+// (chart + "Ajouter une pesée") · TA COMPOSITION · TES PESÉES (history folded).
 
 import type { Screen } from './types';
 import type { BodyComp, DayLog } from '../types';
 import { store } from '../store';
-import { h, screenTitle, fmtKg, fmtDelta, parseNum, openSheet, toast, field, segmented, pickImage } from '../lib/ui';
+import {
+  h, screenTitle, fmtKg, fmtDelta, parseNum, openSheet, toast, field, segmented, pickImage,
+  sectionTitle, actionLink, infoRow, disclosure, keyBubble, ICON,
+} from '../lib/ui';
 import type { Sheet } from '../lib/ui';
 import { daysBetween, fmtDayMonth, fmtShort, today } from '../lib/dates';
 import { movingAverage, paceBreakdown, slopePerDay } from '../lib/nutrition';
@@ -214,32 +218,24 @@ function summary(): HTMLElement {
   // Pregnancy mode: no loss goal anywhere, the numbers stay for information.
   const pregnant = cycleSettings(p).pregnant;
   const stat = (value: string, unit: string, label: string) =>
-    h('div', { class: 'stat' }, h('span', { class: 'value' }, value, unit ? h('small', null, unit) : null), h('span', { class: 'label' }, label));
-
-  const card = h('section', { class: 'card' },
-    h('div', { class: 'grid-3' },
-      stat(fmtKg(avg), 'kg', 'moyenne 7 j'),
-      stat(avg === null ? '—' : fmtDelta(avg - p.startWeight), 'kg', 'depuis le départ'),
-      pregnant
-        ? stat(String(ws.length), '', 'pesées')
-        : stat(avg === null ? '—' : fmtKg(Math.max(0, avg - p.goalWeight)), 'kg', 'jusqu’au palier'),
-    ),
-  );
+    h('div', { class: 'stat' }, h('span', { class: 'value', style: 'font-size:1.15rem' }, value, unit ? h('small', null, unit) : null), h('span', { class: 'label' }, label));
 
   const slope = slopePerDay(ws, 14);
   const t = today();
   const daysLeft = daysBetween(t, p.goalDate);
   let sentence: string;
+  let trend: string | null = slope === null ? null : fmtWeek(slope * 7);
   let chip: HTMLElement | null = null;
   if (pregnant) {
     sentence = slope === null
       ? 'Mode grossesse : pas d’objectif de poids ici. Suis les repères de ta sage-femme ou de ton médecin.'
-      : `${fmtWeek(slope * 7)} sur 14 jours · pas d’objectif de perte en mode grossesse.`;
+      : 'sur 14 jours · pas d’objectif de perte en mode grossesse.';
   } else if (avg !== null && avg <= p.goalWeight) {
     sentence = p.finalGoalWeight !== undefined && avg > p.finalGoalWeight
       ? 'Palier atteint. La suite vers l’objectif final se fait tranquillement.'
       : 'Objectif atteint. Maintenant, on garde le cap tranquillement.';
     chip = h('span', { class: 'chip good' }, 'atteint');
+    trend = null;
   } else if (slope === null) {
     sentence = ws.length
       ? 'Encore quelques pesées pour voir ta vraie tendance (3 sur 14 jours suffisent).'
@@ -247,17 +243,35 @@ function summary(): HTMLElement {
   } else {
     const weekly = slope * 7;
     const required = avg !== null && daysLeft > 0 ? ((p.goalWeight - avg) / daysLeft) * 7 : null;
-    sentence = `${fmtWeek(weekly)} sur 14 jours`;
+    sentence = 'sur 14 jours';
     if (required !== null) {
       sentence += ` · il faut ${fmtWeek(required)}`;
       const onPace = weekly <= required + 0.05;
       chip = h('span', { class: 'chip ' + (onPace ? 'good' : 'warn') }, onPace ? 'dans le rythme' : 'on ajuste doucement');
     }
   }
-  card.appendChild(h('div', { class: 'row between wrap' }, h('p', { class: 'small num grow' }, sentence), chip));
   const pace = paceLine(avg);
-  if (pace) card.appendChild(h('p', { class: 'small muted' }, pace));
-  return card;
+
+  return h('section', { class: 'card ux solo' },
+    h('div', { class: 'td-energy' },
+      keyBubble(fmtKg(avg), 'kg', 'moyenne 7 j'),
+      h('div', { class: 'td-energy-side', style: 'gap:6px' },
+        trend ? h('span', { class: 'w-trend num' }, trend) : null,
+        h('p', { class: 'small muted num' }, sentence),
+        chip ? h('div', null, chip) : null,
+      ),
+    ),
+    disclosure('Voir le détail', () => [
+      h('div', { class: 'grid-3' },
+        stat(fmtKg(avg), 'kg', 'moyenne 7 j'),
+        stat(avg === null ? '—' : fmtDelta(avg - p.startWeight), 'kg', 'depuis le départ'),
+        pregnant
+          ? stat(String(ws.length), '', 'pesées')
+          : stat(avg === null ? '—' : fmtKg(Math.max(0, avg - p.goalWeight)), 'kg', 'jusqu’au palier'),
+      ),
+      pace ? h('p', { class: 'small muted' }, pace) : null,
+    ], 'w-summary'),
+  );
 }
 
 /** Brisk walking burns roughly 4 kcal per minute (estimate, varies with weight and speed). */
@@ -294,29 +308,20 @@ function retentionNote(): HTMLElement | null {
 }
 
 function chartCard(): HTMLElement {
-  const card = h('section', { class: 'card' });
+  const card = h('section', { class: 'card ux' });
   const draw = () => {
     card.replaceChildren(
-      h('div', { class: 'card-head' }, h('h2', null, 'Tendance'), h('span', { class: 'small muted' }, 'kg')),
       segmented<ChartRange>([{ value: 'all', label: 'Tout' }, { value: '30', label: '30 j' }], chartRange, (v) => {
         chartRange = v;
         draw();
       }),
       weightChart(store.profile, store.weights(), chartRange, store.state.days),
       retentionNote() ?? '',
+      actionLink('Ajouter une pesée', () => openWeighSheet()),
     );
   };
   draw();
   return card;
-}
-
-function actions(): HTMLElement {
-  importSlot = h('div', null);
-  if (aiImages !== null) fillImportSlot(importSlot);
-  return h('div', { class: 'stack' },
-    h('button', { class: 'btn primary block', type: 'button', onclick: () => openWeighSheet() }, 'Ajouter une pesée'),
-    importSlot,
-  );
 }
 
 const BODY_FIELDS: { k: keyof BodyComp; label: string; unit: string; better: 'down' | 'up' | null; int?: boolean }[] = [
@@ -331,16 +336,15 @@ function bodyCard(): HTMLElement {
   const withBody = Object.values(store.state.days)
     .filter((d) => d.body && Object.values(d.body).some((v) => typeof v === 'number'))
     .sort((a, b) => a.date.localeCompare(b.date));
-  const card = h('section', { class: 'card' });
+  const card = h('section', { class: 'card ux solo' });
   const latest = withBody[withBody.length - 1];
   const firstB = withBody[0];
-  card.appendChild(h('div', { class: 'card-head' },
-    h('h2', null, 'Composition'),
-    latest ? h('span', { class: 'small muted' }, fmtShort(latest.date)) : null,
-  ));
-  if (!latest) {
-    card.appendChild(h('p', { class: 'small muted' }, 'Pas encore de valeurs. Ajoute-les avec ta prochaine pesée, ou importe une capture.'));
-  } else {
+  card.appendChild(infoRow({
+    icon: ICON.leaf,
+    title: 'La masse grasse compte plus que le poids',
+    detail: latest ? `Dernière mesure : ${fmtShort(latest.date)}` : 'Pas encore de valeurs. Ajoute-les avec ta prochaine pesée, ou importe une capture.',
+  }));
+  if (latest) {
     const compare = firstB && firstB.date !== latest.date ? firstB : null;
     const cells = BODY_FIELDS.filter((f) => typeof latest.body![f.k] === 'number').map((f) => {
       const v = latest.body![f.k] as number;
@@ -362,61 +366,80 @@ function bodyCard(): HTMLElement {
     card.appendChild(h('div', { class: 'grid-3' }, cells));
     if (compare) card.appendChild(h('p', { class: 'small muted' }, `Écarts depuis le ${fmtDayMonth(compare.date).replace(/\.$/, "")}`));
   }
-  card.appendChild(h('p', { class: 'small muted' }, 'La masse grasse compte plus que le poids.'));
   return card;
 }
 
 function historyCard(): HTMLElement {
-  const card = h('section', { class: 'card' });
+  const card = h('section', { class: 'card ux solo' });
+  importSlot = h('div', null);
+  if (aiImages !== null) fillImportSlot(importSlot);
+  const slot = importSlot;
   const draw = () => {
     const ws = store.weights();
     const rows = ws.slice(-14).reverse();
-    card.replaceChildren(h('div', { class: 'card-head' }, h('h2', null, 'Historique'), h('span', { class: 'small muted' }, '14 dernières')));
-    if (!rows.length) {
-      card.appendChild(h('p', { class: 'empty' }, 'Aucune pesée pour l’instant.'));
-      return;
-    }
-    const list = h('div', { class: 'list' });
-    for (const r of rows) {
-      const idx = ws.findIndex((x) => x.date === r.date);
-      const prev = idx > 0 ? ws[idx - 1] : null;
-      const confirming = confirmDelete === r.date;
-      const day = store.getDay(r.date);
-      list.appendChild(h('div', { class: 'list-row' },
-        h('button', {
-          class: 'main', type: 'button',
-          style: 'background:none;border:0;padding:0;text-align:left;cursor:pointer',
-          onclick: () => openWeighSheet({ date: r.date, weight: r.weight, body: day.body }),
-        },
-          h('div', { class: 'title num' }, `${fmtKg(r.weight)} kg`),
-          h('div', { class: 'sub' }, fmtShort(r.date), prev ? ` · ${fmtDelta(r.weight - prev.weight)}` : '', day.body ? ' · compo' : ''),
-        ),
-        confirming
-          ? h('div', { class: 'row' },
-              h('button', { class: 'btn sm ghost', type: 'button', onclick: () => { confirmDelete = null; draw(); } }, 'Annuler'),
-              h('button', {
-                class: 'btn sm danger', type: 'button',
-                onclick: () => {
-                  confirmDelete = null;
-                  void store.updateDay(r.date, (d) => { delete d.weight; delete d.body; });
-                  toast('Pesée supprimée');
-                },
-              }, 'Confirmer la suppression'),
-            )
-          : h('button', {
-              class: 'btn sm ghost', type: 'button', 'aria-label': `Supprimer la pesée du ${fmtShort(r.date)}`,
-              onclick: () => { confirmDelete = r.date; draw(); },
-            }, 'Supprimer'),
-      ));
-    }
-    card.appendChild(list);
+    const last = ws[ws.length - 1];
+    card.replaceChildren(
+      infoRow({
+        icon: ICON.scale,
+        title: ws.length ? `${ws.length} pesée${ws.length > 1 ? 's' : ''}` : 'Aucune pesée pour l’instant',
+        detail: last ? h('span', { class: 'num' }, `Dernière : ${fmtKg(last.weight)} kg · ${fmtShort(last.date)}`) : 'Le matin, au réveil, c’est le plus fiable.',
+      }),
+      rows.length ? disclosure('Voir l’historique', () => historyList(ws, rows, draw), 'w-history') : '',
+      slot,
+    );
   };
   draw();
   return card;
 }
 
+function historyList(ws: { date: string; weight: number }[], rows: { date: string; weight: number }[], draw: () => void): HTMLElement {
+  const list = h('div', { class: 'list' });
+  for (const r of rows) {
+    const idx = ws.findIndex((x) => x.date === r.date);
+    const prev = idx > 0 ? ws[idx - 1] : null;
+    const confirming = confirmDelete === r.date;
+    const day = store.getDay(r.date);
+    list.appendChild(h('div', { class: 'list-row' },
+      h('button', {
+        class: 'main', type: 'button',
+        style: 'background:none;border:0;padding:0;text-align:left;cursor:pointer',
+        onclick: () => openWeighSheet({ date: r.date, weight: r.weight, body: day.body }),
+      },
+        h('div', { class: 'title num' }, `${fmtKg(r.weight)} kg`),
+        h('div', { class: 'sub' }, fmtShort(r.date), prev ? ` · ${fmtDelta(r.weight - prev.weight)}` : '', day.body ? ' · compo' : ''),
+      ),
+      confirming
+        ? h('div', { class: 'row' },
+            h('button', { class: 'btn sm ghost', type: 'button', onclick: () => { confirmDelete = null; draw(); } }, 'Annuler'),
+            h('button', {
+              class: 'btn sm danger', type: 'button',
+              onclick: () => {
+                confirmDelete = null;
+                void store.updateDay(r.date, (d) => { delete d.weight; delete d.body; });
+                toast('Pesée supprimée');
+              },
+            }, 'Confirmer la suppression'),
+          )
+        : h('button', {
+            class: 'btn sm ghost', type: 'button', 'aria-label': `Supprimer la pesée du ${fmtShort(r.date)}`,
+            onclick: () => { confirmDelete = r.date; draw(); },
+          }, 'Supprimer'),
+    ));
+  }
+  return h('div', { class: 'stack', style: 'gap:6px' },
+    list,
+    h('p', { class: 'small muted' }, '14 dernières. Touche une pesée pour la modifier.'),
+  );
+}
+
 // ---------- screen ----------
 
 export const renderWeight: Screen = (root) => {
-  root.append(header(), summary(), chartCard(), actions(), bodyCard(), historyCard());
+  root.append(
+    header(),
+    sectionTitle('Ta tendance'), summary(),
+    sectionTitle('Ta courbe'), chartCard(),
+    sectionTitle('Ta composition'), bodyCard(),
+    sectionTitle('Tes pesées'), historyCard(),
+  );
 };

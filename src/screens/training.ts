@@ -1,9 +1,13 @@
-// "Sport" screen: this week first (planned vs done), quick logging, consistency, then the season.
+// "Sport" screen, in sections: TA SEMAINE (sessions bubble, one info row per session, "Noter une
+// séance" prominent) · TA RÉGULARITÉ (details folded) · TA SAISON (timeline folded).
 
 import type { Screen } from './types';
 import type { PlannedSession, Sport, Workout } from '../types';
 import { store, uid } from '../store';
-import { h, screenTitle, openSheet, toast, field, bar, parseNum, fmtInt, SPORT_LABEL, SPORT_GLYPH } from '../lib/ui';
+import {
+  h, screenTitle, openSheet, toast, field, bar, parseNum, fmtInt, SPORT_LABEL, SPORT_GLYPH,
+  sectionTitle, infoRow, disclosure, keyBubble, ICON,
+} from '../lib/ui';
 import type { Sheet } from '../lib/ui';
 import { addDays, dayShort, fmtDayMonth, fmtShort, mondayOf, range, today, weekday } from '../lib/dates';
 import { adaptSession, blockOn, cycleForecast, goodDays, season, sessionCapOn, weekOf } from '../data/plan';
@@ -74,9 +78,11 @@ export const renderTraining: Screen = (root) => {
 
   root.append(
     header(t),
+    sectionTitle('Ta semaine'),
     weekCard(viewMonday, t),
-    h('button', { class: 'btn primary block', onclick: () => openLogSheet({ date: t }) }, 'Noter une séance'),
+    sectionTitle('Ta régularité'),
     consistencyCard(t),
+    sectionTitle('Ta saison'),
     seasonCard(t),
   );
 };
@@ -124,7 +130,7 @@ function weekCard(mon: string, t: string): HTMLElement {
     h('button', { class: 'btn-icon', 'aria-label': 'Semaine suivante', onclick: () => { weekOffset++; redraw(); } }, '›'),
   );
 
-  const card = h('section', { class: 'card' }, nav);
+  const card = h('section', { class: 'card ux solo' }, nav);
   // Week browsing is local UI state: swap this card in place (no store write, no scroll jump).
   function redraw() { card.replaceWith(weekCard(addDays(mondayOf(t), 7 * weekOffset), t)); }
   if (week?.focus) card.append(h('p', { class: 'quote', style: 'font-size:1rem' }, week.focus));
@@ -132,21 +138,24 @@ function weekCard(mon: string, t: string): HTMLElement {
   if (plannedMin > 0 || doneMin > 0) {
     const ratio = plannedMin ? doneMin / plannedMin : 1;
     card.append(
-      h('div', { class: 'row between', style: 'align-items:flex-end' },
-        h('div', { class: 'stat' },
-          h('div', { class: 'value' }, fmtInt(doneMin), h('small', null, plannedMin ? `/ ${fmtInt(plannedMin)} min` : 'min')),
-          h('div', { class: 'label' }, plannedMin ? 'minutes faites sur le prévu' : 'minutes cette semaine'),
-        ),
+      h('div', { class: 'td-energy' },
         required.length
-          ? h('div', { class: 'stat', style: 'text-align:right' },
-              h('div', { class: 'value' }, String(doneReq), h('small', null, `/ ${required.length}`)),
-              h('div', { class: 'label' }, 'séances prévues'),
-            )
-          : null,
+          ? keyBubble(`${doneReq}/${required.length}`, undefined, 'séances')
+          : keyBubble(String(logged.length), undefined, logged.length > 1 ? 'séances' : 'séance'),
+        h('div', { class: 'td-energy-side' },
+          h('div', { class: 'td-mini' },
+            h('div', { class: 'td-mini-top' },
+              h('span', { style: 'font-weight:700' }, 'Minutes'),
+              h('span', { class: 'num muted' }, plannedMin ? `${fmtInt(doneMin)} / ${fmtInt(plannedMin)}` : fmtInt(doneMin)),
+            ),
+            bar(ratio, ratio >= 1 ? 'good' : 'accent'),
+          ),
+          h('p', { class: 'small muted' }, doneReq >= required.length && required.length ? 'Semaine bouclée. Bravo.' : 'La version mini compte aussi.'),
+        ),
       ),
-      bar(ratio, ratio >= 1 ? 'good' : 'accent'),
     );
   }
+  card.append(h('button', { class: 'btn primary block sp-big', type: 'button', onclick: () => openLogSheet({ date: t }) }, 'Noter une séance'));
 
   const represented = new Set<LoggedWorkout>();
   for (const s of planned) { const l = byPlan.get(s.id); if (l) represented.add(l); }
@@ -156,7 +165,7 @@ function weekCard(mon: string, t: string): HTMLElement {
       `Tes bons jours cette semaine : ${listDays([...good])}. Place-y la séance la plus longue.`,
       h('span', { class: 'muted' }, ' Estimation selon ton cycle.')));
   }
-  const list = h('div', { class: 'list' });
+  const list = h('div', { class: 'sp-days' });
   for (const date of range(mon, sun)) {
     const items: HTMLElement[] = [];
     for (const s of planned.filter((x) => x.date === date)) items.push(plannedRow(s, byPlan.get(s.id)));
@@ -188,20 +197,23 @@ function plannedRow(orig: PlannedSession, done: LoggedWorkout | undefined): HTML
   const sub = done
     ? done.w.mini ? `Version mini faite · ${fmtMin(done.w.minutes)}` : `Faite · ${fmtMin(done.w.minutes)}`
     : `${fmtMin(s.minutes)} · ${s.intensity}${s.optional ? ' · optionnelle' : ''}`;
-  return h('button', { class: 'list-row sp-tap', type: 'button', onclick: () => openSessionSheet(s) },
-    h('span', { class: 'glyph' + (done ? ' done' : '') }, SPORT_GLYPH[s.sport] ?? '··'),
-    h('div', { class: 'main' }, h('div', { class: 'title' }, s.title), h('div', { class: 'sub' }, sub),
-      note && !done ? h('div', { class: 'sub sp-note' }, note) : null),
-    done?.w.mini ? h('span', { class: 'chip accent' }, 'mini') : null,
-  );
+  return infoRow({
+    icon: SPORT_GLYPH[s.sport] ?? '··',
+    title: s.title,
+    detail: note && !done ? [sub, h('span', { class: 'sp-note', style: 'display:block' }, note)] : sub,
+    onClick: () => openSessionSheet(s),
+    cls: done ? 'td-done' : '',
+  });
 }
 
 function workoutRow(l: LoggedWorkout): HTMLElement {
-  return h('button', { class: 'list-row sp-tap', type: 'button', onclick: () => openWorkoutSheet(l) },
-    h('span', { class: 'glyph done' }, SPORT_GLYPH[l.w.sport] ?? '··'),
-    h('div', { class: 'main' }, h('div', { class: 'title' }, SPORT_LABEL[l.w.sport] ?? 'Séance'), h('div', { class: 'sub' }, workoutSub(l.w))),
-    l.w.mini ? h('span', { class: 'chip accent' }, 'mini') : null,
-  );
+  return infoRow({
+    icon: SPORT_GLYPH[l.w.sport] ?? '··',
+    title: SPORT_LABEL[l.w.sport] ?? 'Séance',
+    detail: workoutSub(l.w) + (l.w.mini ? ' · mini' : ''),
+    onClick: () => openWorkoutSheet(l),
+    cls: 'td-done',
+  });
 }
 
 // ---------- sheets ----------
@@ -434,36 +446,35 @@ function consistencyCard(t: string): HTMLElement {
   const rows = [...perSport.entries()].sort((a, b) => b[1] - a[1]);
   const max = rows.length ? rows[0][1] : 1;
 
-  const card = h('section', { class: 'card' },
-    h('div', { class: 'card-head' }, h('h2', null, 'Régularité')),
-    h('div', { class: 'row', style: 'align-items:flex-end;gap:12px' },
-      h('div', { class: 'big-number' }, String(streak)),
-      h('div', { class: 'stack', style: 'gap:2px' },
-        h('div', { style: 'font-weight:700' }, streak === 1 ? 'Semaine active d’affilée' : 'Semaines actives d’affilée'),
+  return h('section', { class: 'card ux solo' },
+    h('div', { class: 'td-energy' },
+      keyBubble(String(streak), streak === 1 ? 'semaine' : 'semaines', 'd’affilée', 'ink'),
+      h('div', { class: 'td-energy-side', style: 'gap:4px' },
+        h('div', { style: 'font-weight:700' }, streak === 1 ? 'Semaine active' : 'Semaines actives'),
         h('div', { class: 'small muted' }, streak ? '2 séances ou plus par semaine. On continue comme ça.' : 'Deux séances cette semaine et le compteur démarre.'),
       ),
     ),
-    h('div', { class: 'grid-2' },
-      h('div', { class: 'stat' }, h('div', { class: 'value' }, fmtInt(since.length)), h('div', { class: 'label' }, since.length > 1 ? 'séances depuis le départ' : 'séance depuis le départ')),
-      h('div', { class: 'stat' }, h('div', { class: 'value' }, fmtMin(totalMin)), h('div', { class: 'label' }, 'au total')),
-    ),
-  );
-
-  if (rows.length) {
-    card.append(
-      h('div', { class: 'eyebrow' }, '4 dernières semaines'),
-      h('div', { class: 'stack', style: 'gap:8px' },
-        rows.map(([sp, m]) =>
-          h('div', { class: 'sp-bar-row' },
-            h('span', { class: 'small' }, SHORT_LABEL[sp]),
-            bar(m / max),
-            h('span', { class: 'small num muted', style: 'text-align:right' }, fmtMin(m)),
-          ),
-        ),
+    disclosure('Voir le détail', () => [
+      h('div', { class: 'grid-2' },
+        h('div', { class: 'stat' }, h('div', { class: 'value' }, fmtInt(since.length)), h('div', { class: 'label' }, since.length > 1 ? 'séances depuis le départ' : 'séance depuis le départ')),
+        h('div', { class: 'stat' }, h('div', { class: 'value' }, fmtMin(totalMin)), h('div', { class: 'label' }, 'au total')),
       ),
-    );
-  }
-  return card;
+      rows.length
+        ? [
+            h('div', { class: 'eyebrow' }, '4 dernières semaines'),
+            h('div', { class: 'stack', style: 'gap:8px' },
+              rows.map(([sp, m]) =>
+                h('div', { class: 'sp-bar-row' },
+                  h('span', { class: 'small' }, SHORT_LABEL[sp]),
+                  bar(m / max),
+                  h('span', { class: 'small num muted', style: 'text-align:right' }, fmtMin(m)),
+                ),
+              ),
+            ),
+          ]
+        : null,
+    ], 'sp-consistency'),
+  );
 }
 
 // ---------- season ----------
@@ -485,9 +496,12 @@ function seasonCard(t: string): HTMLElement {
       ),
     );
   }
-  return h('section', { class: 'card' },
-    h('div', { class: 'card-head' }, h('h2', null, 'La saison')),
-    tl,
-    h('p', { class: 'small', style: 'font-weight:700' }, `${p.raceName || 'Half Ironman'} · 1,9 km · 90 km · 21,1 km · ${fmtDayMonth(p.raceDate)}`),
+  const cur = blocks.find((b) => t >= b.start && t <= b.end);
+  return h('section', { class: 'card ux solo' },
+    cur
+      ? infoRow({ icon: ICON.flag, title: cur.name, detail: cur.goal })
+      : infoRow({ icon: ICON.flag, title: t < p.startDate ? `Départ le ${fmtDayMonth(p.startDate)}` : 'Saison terminée', detail: t < p.startDate ? 'On commence doucement.' : 'Bravo pour tout ce chemin.' }),
+    infoRow({ icon: ICON.spark, title: p.raceName || 'Half Ironman', detail: `1,9 km · 90 km · 21,1 km · ${fmtDayMonth(p.raceDate)}` }),
+    disclosure('Voir toute la saison', () => tl, 'sp-season'),
   );
 }

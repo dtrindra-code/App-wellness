@@ -4,7 +4,7 @@
 
 import type { CycleDay, DayLog } from '../types';
 import { store } from '../store';
-import { h, field, openSheet, toast, fmtKg } from '../lib/ui';
+import { h, field, openSheet, toast, fmtKg, infoRow, actionLink, ICON } from '../lib/ui';
 import { today, addDays, daysBetween, parseISO, toISO, fmtShort, fmtDayMonth, fmtLong, weekday } from '../lib/dates';
 import { cycleSettings, cycleModel, dayMark, positionOn, lengthStats, phaseLabel, periodStarts, cycleOn } from '../lib/cycle';
 import type { CycleInfo, CycleModel, CyclePhase, CycleRecord } from '../lib/cycle';
@@ -18,6 +18,8 @@ let view: View = 'cal';
 let calMonth: string | null = null;
 /** Cycle shown in "Jour par jour": 0 = in progress, 1 = previous… */
 let daysBack = 0;
+/** The "Ton suivi" card is folded until asked ("Voir mon suivi"). */
+let trackOpen = false;
 
 // ---------- log helpers ----------
 
@@ -193,19 +195,28 @@ export function hereSentence(date: string, info: CycleInfo): string {
 // ---------- the "Suivi" section ----------
 
 export function trackCard(date: string): HTMLElement {
-  const card = h('section', { class: 'card' });
+  const card = h('section', { class: 'card ux cc-track' });
   const paint = () => {
     const m = cycleModel(date, store.profile, store.state.days);
+    const st = lengthStats(m);
+    const summary = st
+      ? `Cycle moyen ${st.mean} j · ${m.cycles.length} cycle${m.cycles.length > 1 ? 's' : ''} noté${m.cycles.length > 1 ? 's' : ''}`
+      : m.cycles.length ? 'Calendrier, jour par jour et historique' : 'Note tes règles pour remplir ton suivi';
     card.replaceChildren(
-      h('div', { class: 'card-head' }, h('h2', null, 'Suivi du cycle'), h('span', { class: 'small muted' }, 'jour par jour, mois par mois')),
-      h('div', { class: 'seg cc-tabs', role: 'tablist', 'aria-label': 'Vue du suivi' },
-        ([['cal', 'Calendrier'], ['days', 'Jour par jour'], ['cycles', 'Mes cycles']] as [View, string][]).map(([v, label]) =>
-          h('button', {
-            class: 'seg-item' + (view === v ? ' on' : ''), role: 'tab', type: 'button', 'aria-selected': view === v ? 'true' : 'false',
-            onclick: () => { view = v; paint(); },
-          }, label)),
-      ),
-      view === 'cal' ? calendarView(m, paint) : view === 'days' ? daysView(m, paint) : cyclesView(m),
+      infoRow({ icon: ICON.cycle, title: 'Calendrier et historique', detail: summary }),
+      trackOpen
+        ? h('div', { class: 'stack', style: 'gap:12px' },
+            h('div', { class: 'seg cc-tabs', role: 'tablist', 'aria-label': 'Vue du suivi' },
+              ([['cal', 'Calendrier'], ['days', 'Jour par jour'], ['cycles', 'Mes cycles']] as [View, string][]).map(([v, label]) =>
+                h('button', {
+                  class: 'seg-item' + (view === v ? ' on' : ''), role: 'tab', type: 'button', 'aria-selected': view === v ? 'true' : 'false',
+                  onclick: () => { view = v; paint(); },
+                }, label)),
+            ),
+            view === 'cal' ? calendarView(m, paint) : view === 'days' ? daysView(m, paint) : cyclesView(m),
+          )
+        : '',
+      actionLink(trackOpen ? 'Masquer mon suivi' : 'Voir mon suivi', () => { trackOpen = !trackOpen; paint(); }),
     );
   };
   paint();
