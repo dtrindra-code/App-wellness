@@ -1,6 +1,6 @@
 {
-  "name": "Cap Maldives",
-  "short_name": "Cap",
+  "name": "Pep’s",
+  "short_name": "Pep’s",
   "description": "Poids, repas, sport et équilibre. Tes données restent sur ton téléphone.",
   "lang": "fr",
   "dir": "ltr",
@@ -9,7 +9,7 @@
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#FFF6D3",
+  "background_color": "#FFC8DD",
   "theme_color": "#FFF6D3",
   "icons": [
     { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },

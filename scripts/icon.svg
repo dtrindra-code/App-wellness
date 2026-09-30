@@ -1,17 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <!-- Cap Maldives: lagoon square, low sun on the horizon, one soft wave. -->
+  <!-- Pep's: the original sun-on-the-horizon mark in the brand colours (pink, cream, black). -->
   <defs>
-    <linearGradient id="sea" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#1a948d"/>
-      <stop offset="1" stop-color="#0a6662"/>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFD7E7"/>
+      <stop offset="1" stop-color="#FFC8DD"/>
     </linearGradient>
     <clipPath id="sky"><rect width="512" height="284"/></clipPath>
     <clipPath id="shape"><rect width="512" height="512" rx="{{RX}}"/></clipPath>
   </defs>
   <g clip-path="url(#shape)">
-    <rect width="512" height="512" fill="url(#sea)"/>
-    <circle cx="256" cy="284" r="74" fill="#ffffff" opacity="0.92" clip-path="url(#sky)"/>
-    <rect x="112" y="280" width="288" height="16" rx="8" fill="#ffffff"/>
-    <path d="M152 346 q26 -20 52 0 t52 0 t52 0 t52 0" fill="none" stroke="#ffffff" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" opacity="0.8"/>
+    <rect width="512" height="512" fill="url(#bg)"/>
+    <circle cx="256" cy="284" r="78" fill="#FFF6D3" stroke="#111111" stroke-width="6" clip-path="url(#sky)"/>
+    <rect x="112" y="278" width="288" height="16" rx="8" fill="#111111"/>
+    <path d="M152 346 q26 -20 52 0 t52 0 t52 0 t52 0" fill="none" stroke="#111111" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
   </g>
 </svg>

@@ -217,7 +217,7 @@ export async function testNotification(): Promise<void> {
   const reg = await registration();
   const d = today();
   const slot = slotAt(d, new Date().getHours() + new Date().getMinutes() / 60);
-  let msg: CoachMessage = { title: 'Cap Maldives', body: 'Petit coucou : les notifications marchent !' };
+  let msg: CoachMessage = { title: 'Pep’s', body: 'Petit coucou : les notifications marchent !' };
   try { msg = coachMessages(d, store.state)[slot]; } catch { /* generic */ }
   await reg.showNotification(msg.title, {
     body: msg.body,

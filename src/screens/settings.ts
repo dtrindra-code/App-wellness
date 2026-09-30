@@ -10,11 +10,15 @@ import {
   sectionTitle, actionLink, infoRow, disclosure, ICON,
 } from '../lib/ui';
 import { store } from '../store';
-import { daysBetween, fmtDayMonth, today } from '../lib/dates';
+import { fmtDayMonth, today } from '../lib/dates';
 import { targets, phaseOn } from '../lib/nutrition';
 import { PREGNANCY_NOTE, adviceFor, cycleOn, cycleSettings } from '../lib/cycle';
 import { QUOTES, QUOTES_FOR_SHORTCUT } from '../data/quotes';
 import { openProfileEditor, toggleRow } from './onboarding';
+import {
+  BackupExistsError, backupReminderDue, disableSync, onSyncStatus, pushNow, readLastExport, readSyncConfig,
+  restoreFromRemote, restoreSync, setupSync, syncStatus,
+} from '../lib/sync';
 import {
   PUSH_SLOTS, currentSubscription, enablePush, pushStatus, savedSubscription, testNotification,
 } from '../lib/notify';
@@ -303,15 +307,6 @@ function cycleCard(): HTMLElement | null {
 
 const LAST_EXPORT_KEY = 'cap-maldives:lastExport';
 
-function readLastExport(): string | null {
-  try {
-    const v = localStorage.getItem(LAST_EXPORT_KEY);
-    return v && /^\d{4}-\d{2}-\d{2}/.test(v) ? v.slice(0, 10) : null;
-  } catch {
-    return null;
-  }
-}
-
 function markExported() {
   try { localStorage.setItem(LAST_EXPORT_KEY, today()); } catch { /* ignore */ }
   rerender?.();
@@ -347,23 +342,188 @@ async function exportBackup() {
   if (await copy(json, 'export', 'Sauvegarde copiée')) markExported();
 }
 
+// ---------- automatic encrypted backup (lib/sync) ----------
+
+/** Form + confirmation state (module-level: the screen re-renders from scratch). */
+const sync = {
+  token: '',
+  pass: '',
+  pass2: '',
+  busy: '' as '' | 'setup' | 'restore' | 'push' | 'remote',
+  error: null as string | null,
+  /** Date of an existing backup found during setup: second tap creates a new one. */
+  existsAt: null as string | null,
+  armRestore: false,
+  armOff: false,
+};
+
+// Status changes (upload started/finished) refresh the Plus screen, unless she is typing.
+onSyncStatus(() => {
+  const a = document.activeElement;
+  if (a && /INPUT|TEXTAREA/.test(a.tagName)) return;
+  rerender?.();
+});
+
+const fmtWhen = (iso: string, todayWord = '') => {
+  const d = new Date(iso);
+  const time = d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return day === today() ? `${todayWord}à ${time}` : `le ${fmtDayMonth(day)} à ${time}`;
+};
+
+async function runSync(kind: typeof sync.busy, fn: () => Promise<void>, ok: string) {
+  if (sync.busy) return;
+  sync.busy = kind;
+  sync.error = null;
+  rerender?.();
+  try {
+    await fn();
+    sync.token = sync.pass = sync.pass2 = '';
+    sync.existsAt = null;
+    toast(ok);
+  } catch (e) {
+    if (e instanceof BackupExistsError) sync.existsAt = e.updatedAt;
+    else sync.error = e instanceof Error ? e.message : 'Ça n’a pas marché.';
+  }
+  sync.busy = '';
+  sync.armRestore = sync.armOff = false;
+  rerender?.();
+}
+
+function onActivate() {
+  if (!sync.token.trim()) { sync.error = 'Colle d’abord ton code GitHub.'; rerender?.(); return; }
+  if (sync.pass.length < 8) { sync.error = 'Le mot de passe doit faire au moins 8 caractères.'; rerender?.(); return; }
+  if (sync.pass !== sync.pass2) { sync.error = 'Les deux mots de passe ne sont pas pareils.'; rerender?.(); return; }
+  const createNew = sync.existsAt !== null;
+  void runSync('setup', () => setupSync(sync.token, sync.pass, { createNew }), 'Sauvegarde automatique activée');
+}
+
+function onRestoreExisting() {
+  if (!sync.token.trim() || !sync.pass) { sync.error = 'Colle ton code GitHub et tape ton mot de passe de sauvegarde.'; rerender?.(); return; }
+  void runSync('restore', () => restoreSync(sync.token, sync.pass), 'Données restaurées');
+}
+
+function syncInput(key: 'token' | 'pass' | 'pass2', label: string, placeholder: string, hint?: string): HTMLElement {
+  const input = h('input', {
+    type: 'password', value: sync[key], placeholder, autocomplete: key === 'token' ? 'off' : 'new-password',
+    autocapitalize: 'off', spellcheck: false,
+  });
+  input.setAttribute('autocorrect', 'off');
+  input.addEventListener('input', () => { sync[key] = input.value; sync.existsAt = null; });
+  return field(label, input, hint);
+}
+
+function syncSetupCard(): HTMLElement {
+  const steps = [
+    'Sur github.com, touche ta photo de profil, puis Settings.',
+    'Tout en bas : Developer settings → Personal access tokens → Fine-grained tokens.',
+    'Generate new token. Nom : « Cap Maldives ». Expiration : « No expiration » (ou la plus longue proposée).',
+    'Account permissions → Gists → Read and write.',
+    'Generate token, puis copie le code affiché (il commence par github_pat_).',
+  ];
+  return h('section', { class: 'card ux solo sync-card' },
+    h('h3', null, 'Sauvegarde automatique'),
+    h('p', { class: 'small' },
+      'Chaque changement est sauvegardé tout seul, chiffré, dans un espace privé de ton compte GitHub. ',
+      'Sans ton mot de passe, personne d’autre ne peut la lire, même pas GitHub. Si tu supprimes l’app, tu retrouves tout.'),
+    disclosure('Créer ton code GitHub (2 min)', () => [
+      h('ol', { class: 'set-steps' }, steps.map((t) => h('li', null, t))),
+      h('p', { class: 'small muted' }, 'Autre possibilité : « Tokens (classic) » avec seulement la case « gist » cochée.'),
+    ], 'set-sync-steps'),
+    syncInput('token', 'Code GitHub', 'github_pat_…'),
+    syncInput('pass', 'Mot de passe de sauvegarde', '8 caractères minimum'),
+    syncInput('pass2', 'Confirme le mot de passe', 'Le même', 'Pas besoin de confirmer pour restaurer.'),
+    h('p', { class: 'small set-remind' },
+      'Garde ce mot de passe et le code dans ton trousseau iCloud ou dans Notes : sans eux, impossible de récupérer la sauvegarde.'),
+    sync.existsAt
+      ? h('p', { class: 'small sync-warn', role: 'alert' },
+          `Une sauvegarde existe déjà sur ton GitHub (${fmtWhen(sync.existsAt, 'aujourd’hui ')}). Si tu viens de réinstaller l’app, touche « Restaurer une sauvegarde existante ». `,
+          'Sinon, touche encore « Activer » pour en créer une nouvelle à côté.')
+      : null,
+    sync.error ? h('p', { class: 'small tone-bad', role: 'alert' }, sync.error) : null,
+    h('button', { type: 'button', class: 'btn primary block', disabled: !!sync.busy, onclick: onActivate },
+      sync.busy === 'setup' ? 'Activation…' : sync.existsAt ? 'Activer quand même (nouvelle sauvegarde)' : 'Activer la sauvegarde'),
+    h('button', { type: 'button', class: 'btn block', disabled: !!sync.busy, onclick: onRestoreExisting },
+      sync.busy === 'restore' ? 'Restauration…' : 'Restaurer une sauvegarde existante'),
+  );
+}
+
+function syncOnCard(): HTMLElement {
+  const st = syncStatus();
+  const last = st.lastPush ?? readSyncConfig()?.lastPush;
+  const title = st.state === 'syncing' ? 'Sauvegarde…'
+    : st.state === 'error' ? 'Sauvegarde en attente'
+    : last ? `Sauvegardé ${fmtWhen(last)}` : 'Sauvegarde activée';
+  const detail = st.state === 'error' ? st.message ?? 'Nouvel essai bientôt.'
+    : 'Automatique et chiffrée, dans un Gist secret de ton GitHub.';
+  return h('section', { class: 'card ux solo sync-card' },
+    h('h3', null, 'Sauvegarde automatique'),
+    infoRow({ icon: ICON.cycle, title, detail, cls: st.state === 'error' ? 'sync-err' : '' }),
+    st.remoteNewer
+      ? h('div', { class: 'stack sync-newer' },
+          h('p', { class: 'small' }, `Une sauvegarde plus récente existe (${fmtWhen(st.remoteNewer, 'aujourd’hui ')}), faite depuis un autre appareil. En attendant ton choix, rien n’est écrasé.`),
+          h('button', {
+            type: 'button', class: 'btn primary block', disabled: !!sync.busy,
+            onclick: () => void runSync('remote', restoreFromRemote, 'Données restaurées'),
+          }, sync.busy === 'remote' ? 'Restauration…' : 'Restaurer'),
+        )
+      : null,
+    sync.error ? h('p', { class: 'small tone-bad', role: 'alert' }, sync.error) : null,
+    h('button', {
+      type: 'button', class: 'btn primary block', disabled: !!sync.busy || st.state === 'syncing',
+      onclick: () => void runSync('push', async () => {
+        await pushNow({ force: true });
+        const after = syncStatus();
+        if (after.state === 'error') throw new Error(after.message);
+      }, 'Sauvegardé'),
+    }, sync.busy === 'push' || st.state === 'syncing' ? 'Sauvegarde…' : 'Sauvegarder maintenant'),
+    h('div', { class: 'grid-2' },
+      h('button', {
+        type: 'button', class: 'btn', disabled: !!sync.busy,
+        onclick: () => {
+          if (!sync.armRestore) { sync.armRestore = true; sync.armOff = false; rerender?.(); return; }
+          void runSync('remote', restoreFromRemote, 'Données restaurées');
+        },
+      }, sync.busy === 'remote' ? 'Restauration…' : sync.armRestore ? 'Confirmer : remplacer' : 'Restaurer depuis GitHub'),
+      h('button', {
+        type: 'button', class: 'btn danger', disabled: !!sync.busy,
+        onclick: () => {
+          if (!sync.armOff) { sync.armOff = true; sync.armRestore = false; rerender?.(); return; }
+          sync.armOff = false;
+          disableSync();
+          toast('Sauvegarde désactivée sur ce téléphone');
+        },
+      }, sync.armOff ? 'Confirmer' : 'Désactiver sur ce téléphone'),
+    ),
+    sync.armRestore ? h('p', { class: 'small muted' }, 'Tes données de ce téléphone seront remplacées par la sauvegarde.') : null,
+    sync.armOff ? h('p', { class: 'small muted' }, 'Le code et la clé sont oubliés ici. La sauvegarde reste sur ton GitHub.') : null,
+  );
+}
+
+/** Weekly nudge (sync off, no export for 7 days) + the sync card. */
+function syncCards(): HTMLElement[] {
+  const on = readSyncConfig() !== null;
+  const nudge = !on && backupReminderDue()
+    ? h('section', { class: 'card accent ux solo sync-remind' },
+        h('p', { class: 'small' }, readLastExport()
+          ? 'Ta dernière sauvegarde date de plus d’une semaine. Active la sauvegarde automatique : tu n’auras plus à y penser.'
+          : 'Si tu supprimes l’app de l’écran d’accueil, l’iPhone efface tes données. La sauvegarde automatique ci-dessous les met à l’abri.'))
+    : null;
+  return [...(nudge ? [nudge] : []), on ? syncOnCard() : syncSetupCard()];
+}
+
 function dataCard(): HTMLElement {
   const days = Object.keys(store.state.days).length;
   const last = readLastExport();
-  const age = last ? daysBetween(last, today()) : null;
-  const remind = days > 0 && (age === null || age > 14);
   return h('section', { class: 'card ux solo' },
     infoRow({
       icon: ICON.battery,
       title: `${days} jour${days > 1 ? 's' : ''} noté${days > 1 ? 's' : ''} · ${store.state.favorites.length} favori${store.state.favorites.length > 1 ? 's' : ''}`,
-      detail: `Dernière sauvegarde : ${last ? fmtDayMonth(last) : 'pas encore'}`,
+      detail: `Dernier export : ${last ? fmtDayMonth(last) : 'pas encore'}`,
     }),
-    h('p', { class: 'small muted' }, 'Tes données restent sur ce téléphone. Pense à exporter une sauvegarde de temps en temps.'),
-    remind
-      ? h('p', { class: 'small set-remind' }, last
-          ? 'Ta dernière sauvegarde date de plus de deux semaines : un petit export te met à l’abri.'
-          : 'Un premier export te met à l’abri si tu changes de téléphone.')
-      : null,
+    h('p', { class: 'small muted' }, readSyncConfig()
+      ? 'En plus de la sauvegarde automatique, tu peux garder un fichier dans Fichiers ou iCloud.'
+      : 'Sans sauvegarde automatique, tes données restent seulement sur ce téléphone : exporte un fichier de temps en temps.'),
     h('div', { class: 'grid-2' },
       h('button', { type: 'button', class: 'btn primary', onclick: () => void exportBackup() }, 'Exporter'),
       h('button', { type: 'button', class: 'btn', onclick: openImport }, 'Importer'),
@@ -486,6 +646,7 @@ export const renderSettings: Screen = (root, ctx) => {
     profileCard(),
     ...(cycle ? [sectionTitle('Ton cycle'), cycle] : []),
     sectionTitle('Tes données'),
+    ...syncCards(),
     dataCard(),
     sectionTitle('Notifications'),
     notificationsCard(),
