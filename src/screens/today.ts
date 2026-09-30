@@ -19,6 +19,7 @@ import { recoveryFlag, HABITS, habitScore, weekHabitStats } from '../lib/habits'
 import { quoteFor } from '../data/quotes';
 import { openOnboarding } from './onboarding';
 import { coachBlocks } from './coach';
+import { syncReminder } from '../lib/sync';
 
 // ---------- transient UI state ----------
 /** Planned session ids whose "version mini" is unfolded. */
@@ -33,6 +34,7 @@ export const renderToday: Screen = (root, ctx) => {
   const p = store.profile;
 
   root.append(header(date, ctx));
+  root.append(...syncReminder(() => ctx.go('settings')));
   if (store.state.loaded && !p.onboarded) root.append(onboardingCard());
 
   root.append(

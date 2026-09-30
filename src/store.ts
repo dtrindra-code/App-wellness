@@ -1,7 +1,7 @@
 // App state + persistence.
 //
-// Data lives ONLY on this device (localStorage) — nothing is sent to any
-// server. Backups are manual JSON exports (Plus → Données).
+// Data lives on this device (localStorage). Backups: manual JSON exports, or the optional
+// automatic backup (src/lib/sync.ts) that uploads it ENCRYPTED to the user's own secret gist.
 //
 // Screens read `store.state` and call the mutators; every change notifies
 // subscribers, which re-render the current screen.
