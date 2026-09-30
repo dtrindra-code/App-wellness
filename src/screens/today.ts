@@ -271,6 +271,7 @@ function energyCard(date: string, ctx: ScreenCtx): HTMLElement {
     h('div', { class: 'td-energy' },
       keyBubble(fmtInt(Math.abs(left)), 'kcal', over ? 'en plus' : 'restantes', over ? 'warn' : 'pink'),
       h('div', { class: 'td-energy-side' },
+        macro('Calories', eaten.kcal, t.budget, 'kcal'),
         macro('Protéines', eaten.protein, t.protein, 'g'),
         h('div', { class: 'td-water' },
           h('div', { class: 'td-mini' },
@@ -285,8 +286,8 @@ function energyCard(date: string, ctx: ScreenCtx): HTMLElement {
       ),
     ),
     over ? h('p', { class: 'small muted', style: 'text-align:center' }, 'Pas grave, c’est une journée parmi d’autres. Demain on reprend.') : null,
+    h('p', { class: 'small muted num', style: 'text-align:center' }, `${fmtInt(eaten.kcal)} kcal mangées sur ${fmtInt(t.budget)}`),
     disclosure('Voir le détail', () => [
-      h('p', { class: 'small num' }, `${fmtInt(eaten.kcal)} kcal mangées sur ${fmtInt(t.budget)}`),
       h('p', { class: 'small muted num' },
         (t.sportBonus ? `objectif ${fmtInt(t.kcal)} + ${fmtInt(t.sportBonus)} sport` : `objectif ${fmtInt(t.kcal)} kcal`) +
         (cycleExtra > 0 ? ` · dont +${fmtInt(cycleExtra)} kcal (cycle)` : '')),
