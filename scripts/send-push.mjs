@@ -124,7 +124,7 @@ async function main() {
     const who = subs.length > 1 ? ` (appareil ${i + 1})` : '';
     const host = (() => { try { return new URL(sub.endpoint).host; } catch { return '?'; } })();
     try {
-      const res = await webpush.sendNotification(sub, payload, { TTL: 3 * 3600, urgency: 'normal', topic: `cap-${slot}` });
+      const res = await webpush.sendNotification(sub, payload, { TTL: 3 * 3600, urgency: 'normal' });
       console.log(`Notification « ${slot} » envoyée${who} via ${host} (HTTP ${res.statusCode}).`);
     } catch (e) {
       const code = e.statusCode;
