@@ -1,5 +1,7 @@
 // "Repas" screen, in sections: TON BUDGET (kcal-left bubble, details folded) · TES REPAS (one row
-// per slot, "Ajouter" prominent) · DES IDÉES (swipeable cards) · TES FAVORIS (folded).
+// per slot, "Ajouter un aliment" prominent) · DES IDÉES (swipeable cards) · TES FAVORIS (folded).
+// Adding goes through the food search (screens/food-search.ts): bundled foods + Open Food Facts +
+// barcode. Favorites, HelloFresh, photo and manual entry stay as "Autres options".
 
 import type { Screen } from './types';
 import type { FavoriteMeal, Meal, MealSlot, MealSource } from '../types';
@@ -14,6 +16,9 @@ import { phaseOn, targets, totals } from '../lib/nutrition';
 import { aiImagesAvailable, askJSON, aiErrorMessage } from '../lib/ai';
 import { adviceFor, cycleOn, cycleSettings } from '../lib/cycle';
 import type { PhaseAdvice } from '../lib/cycle';
+import { getFood } from '../lib/foods';
+import { openFoodSearch, openMealQuantity } from './food-search';
+import { openSlipSheet } from './slip';
 
 // ---------- transient UI state ----------
 let selectedDate = today();
@@ -219,7 +224,7 @@ function openAddSheet(date: string, preferred?: MealSlot) {
   const slot0 = (): MealSlot => preferred ?? defaultSlot();
   const view = h('div', { class: 'stack' });
   let controller: AbortController | null = null;
-  const sheet: Sheet = openSheet('Ajouter un repas', view, { onClose: () => controller?.abort() });
+  const sheet: Sheet = openSheet('Autres façons d’ajouter', view, { onClose: () => controller?.abort() });
   const done = (msg: string) => { sheet.close(); toast(msg); };
 
   const back = () => h('button', { class: 'btn ghost sm', type: 'button', style: 'align-self:flex-start', onclick: showHome }, '‹ Retour');
@@ -252,6 +257,10 @@ function openAddSheet(date: string, preferred?: MealSlot) {
     drawList();
 
     const sections: HTMLElement[] = [
+      h('button', {
+        class: 'btn primary block', type: 'button',
+        onclick: () => { sheet.close(); openSearch(date, preferred); },
+      }, 'Chercher un aliment ou scanner'),
       h('section', { class: 'stack' }, h('div', { class: 'eyebrow' }, 'Favoris & HelloFresh'), search, list),
     ];
 
@@ -425,7 +434,13 @@ function openEditSheet(date: string, meal: Meal) {
         const c = cleanValues(v);
         void store.updateDay(date, (d) => {
           const i = d.meals.findIndex((m) => m.id === meal.id);
-          if (i >= 0) d.meals[i] = { id: meal.id, source: meal.source, slot, ...c };
+          if (i >= 0) {
+            const next: Meal = { id: meal.id, source: meal.source, slot, ...c };
+            if (meal.grams !== undefined) next.grams = meal.grams;
+            if (meal.foodId) next.foodId = meal.foodId;
+            if (meal.offCode) next.offCode = meal.offCode;
+            d.meals[i] = next;
+          }
         });
         sheet.close();
         toast('Enregistré');
@@ -459,7 +474,7 @@ export const renderFood: Screen = (root) => {
   root.append(
     h('header', { class: 'screen-head' },
       screenTitle('Repas'),
-      h('button', { class: 'btn primary', type: 'button', onclick: () => openAddSheet(date) }, 'Ajouter'),
+      h('button', { class: 'btn primary', type: 'button', onclick: () => openSearch(date) }, 'Ajouter'),
     ),
     dayNav(date, now),
     sectionTitle('Ton budget'),
@@ -563,15 +578,15 @@ function mealsCard(date: string): HTMLElement {
         detail: meals.length ? h('span', { class: 'num' }, `${fmtInt(kcal)} kcal`) : 'Rien de noté',
         trail: h('button', {
           class: 'btn-icon food-add', type: 'button', 'aria-label': `Ajouter : ${SLOT_LABEL[slot]}`,
-          onclick: () => openAddSheet(date, slot),
+          onclick: () => openSearch(date, slot),
         }, '+'),
       }),
       meals.length
         ? h('div', { class: 'list food-meals' }, meals.map((m) =>
-            h('button', { class: 'list-row food-meal', type: 'button', onclick: () => openEditSheet(date, m) },
+            h('button', { class: 'list-row food-meal', type: 'button', onclick: () => editMeal(date, m) },
               h('span', { class: 'main' },
                 h('span', { class: 'title' }, m.name),
-                m.protein !== undefined ? h('span', { class: 'sub' }, `${fmtG(m.protein)} g prot`) : null,
+                mealSub(m) ? h('span', { class: 'sub' }, mealSub(m)) : null,
               ),
               h('span', { class: 'num' }, `${fmtInt(m.kcal || 0)}`, h('span', { class: 'muted small' }, ' kcal')),
             )))
@@ -580,9 +595,33 @@ function mealsCard(date: string): HTMLElement {
   });
   return h('section', { class: 'card ux solo' },
     slots,
-    h('button', { class: 'btn primary block food-big', type: 'button', onclick: () => openAddSheet(date) }, 'Ajouter un repas'),
+    h('button', { class: 'btn primary block food-big', type: 'button', onclick: () => openSearch(date) }, 'Ajouter un aliment'),
+    h('div', { class: 'grid-2 food-alt' },
+      h('button', { class: 'btn', type: 'button', onclick: () => openSearch(date, undefined, true) }, 'Scanner'),
+      h('button', { class: 'btn', type: 'button', onclick: () => openAddSheet(date) }, 'Autres options'),
+    ),
     !day.meals.length && date !== today() ? h('p', { class: 'small muted', style: 'text-align:center' }, 'Rien de noté ce jour-là.') : null,
+    h('button', { class: 'food-slip', type: 'button', onclick: () => openSlipSheet(date) }, 'J’ai craqué'),
   );
+}
+
+/** Food search first; favorites / HelloFresh / manual stay one tap away. */
+function openSearch(date: string, slot?: MealSlot, scan = false) {
+  openFoodSearch(date, slot, { scan, onMore: () => openAddSheet(date, slot) });
+}
+
+/** Meals from the food search open on their quantity; others on the full form. */
+function editMeal(date: string, m: Meal) {
+  if (m.grams && m.grams > 0) openMealQuantity(date, m, () => openEditSheet(date, m));
+  else openEditSheet(date, m);
+}
+
+/** "150 g · 12 g prot" under a meal. */
+function mealSub(m: Meal): string {
+  const parts: string[] = [];
+  if (m.grams) parts.push(`${fmtInt(m.grams)} ${getFood(m.foodId)?.liquid ? 'ml' : 'g'}`);
+  if (m.protein !== undefined) parts.push(`${fmtG(m.protein)} g prot`);
+  return parts.join(' · ');
 }
 
 function weekLine(date: string): HTMLElement | null {

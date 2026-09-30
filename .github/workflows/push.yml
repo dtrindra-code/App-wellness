@@ -1,0 +1,54 @@
+name: Notifications push
+
+# Sends a content-less push {"slot": "..."} to the iPhone; the service worker shows the
+# message the app pre-computed on the phone. See docs/NOTIFICATIONS.md.
+#
+# Moments (Europe/Paris): matin 8 h · midi 12 h · aprem 16 h · soir 20 h · bilan dimanche 19 h.
+# Paris is UTC+2 in summer and UTC+1 in winter (from 25 Oct 2026): every moment runs at
+# both candidate UTC hours and scripts/send-push.mjs only sends when the Paris hour matches.
+# GitHub may start cron jobs a few minutes late.
+
+on:
+  schedule:
+    - cron: '1 6 * * *'   # matin (été)
+    - cron: '1 7 * * *'   # matin (hiver)
+    - cron: '1 10 * * *'  # midi (été)
+    - cron: '1 11 * * *'  # midi (hiver)
+    - cron: '1 14 * * *'  # aprem (été)
+    - cron: '1 15 * * *'  # aprem (hiver)
+    - cron: '1 18 * * *'  # soir (été) · bilan du dimanche (hiver)
+    - cron: '1 19 * * *'  # soir (hiver)
+    - cron: '1 17 * * 0'  # bilan du dimanche (été)
+  workflow_dispatch:
+    inputs:
+      slot:
+        description: 'Moment à envoyer (auto = selon l’heure de Paris)'
+        type: choice
+        default: matin
+        options: [matin, midi, aprem, soir, bilan, auto]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: push
+  cancel-in-progress: false
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Envoyer la notification
+        run: node scripts/send-push.mjs
+        env:
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          PUSH_SUBSCRIPTION: ${{ secrets.PUSH_SUBSCRIPTION }}
+          SLOT: ${{ github.event.inputs.slot }}
+          SCHEDULE: ${{ github.event.schedule }}

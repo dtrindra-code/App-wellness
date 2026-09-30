@@ -1,8 +1,9 @@
-// "Plus" screen, in sections of info rows: TON PROFIL · TON CYCLE · TES DONNÉES · NOTIFICATIONS ·
+// "Plus" screen, in sections of info rows: TON PROFIL · TON CYCLE · TES DONNÉES · NOTIFICATIONS (web push) ·
 // APPARENCE · BIENTÔT. Long explanations are folded.
 
 import type { Screen } from './types';
 import type { CycleSettings } from '../types';
+import type { Child } from '../lib/ui';
 import {
   h, screenTitle, field, openSheet, parseNum, segmented, toast, fmtInt, fmtKg,
   sectionTitle, actionLink, infoRow, disclosure, ICON,
@@ -13,6 +14,9 @@ import { targets, phaseOn } from '../lib/nutrition';
 import { PREGNANCY_NOTE, adviceFor, cycleOn, cycleSettings } from '../lib/cycle';
 import { QUOTES, QUOTES_FOR_SHORTCUT } from '../data/quotes';
 import { openProfileEditor, toggleRow } from './onboarding';
+import {
+  PUSH_SLOTS, currentSubscription, enablePush, pushStatus, savedSubscription, testNotification,
+} from '../lib/notify';
 
 // ---------- theme (applied at import) ----------
 
@@ -47,12 +51,14 @@ function setTheme(t: Theme) {
 
 // ---------- transient UI state ----------
 
+type CopyKey = 'quotes' | 'export' | 'push';
+
 /** Text shown in a selectable textarea when the clipboard is refused. */
-let fallback: { key: 'quotes' | 'export'; text: string } | null = null;
+let fallback: { key: CopyKey; text: string } | null = null;
 let rerender: (() => void) | null = null;
 
 /** Copy to the clipboard; true when it worked (else a selectable box is shown). */
-async function copy(text: string, key: 'quotes' | 'export', okMsg: string): Promise<boolean> {
+async function copy(text: string, key: CopyKey, okMsg: string): Promise<boolean> {
   let ok = true;
   try {
     await navigator.clipboard.writeText(text);
@@ -67,7 +73,7 @@ async function copy(text: string, key: 'quotes' | 'export', okMsg: string): Prom
   return ok;
 }
 
-function fallbackBox(key: 'quotes' | 'export'): HTMLElement | null {
+function fallbackBox(key: CopyKey): HTMLElement | null {
   if (!fallback || fallback.key !== key) return null;
   const ta = h('textarea', { class: 'input set-copy', readOnly: true, value: fallback.text, 'aria-label': 'Texte à copier' });
   setTimeout(() => { ta.focus(); ta.select(); }, 50);
@@ -114,7 +120,89 @@ function profileCard(): HTMLElement {
   );
 }
 
-function notificationsCard(): HTMLElement {
+// ---------- notifications ----------
+
+/** Push UI state (module-level: the screen re-renders from scratch). */
+const push: { sub: string | null; busy: boolean; error: string | null; checked: boolean } = {
+  sub: savedSubscription(),
+  busy: false,
+  error: null,
+  checked: false,
+};
+
+/** Once per session: pick up a subscription the browser already has. */
+function checkSubscription() {
+  if (push.checked) return;
+  push.checked = true;
+  void currentSubscription().then((json) => {
+    if (json && json !== push.sub) { push.sub = json; rerender?.(); }
+  });
+}
+
+async function onEnablePush() {
+  if (push.busy) return;
+  push.busy = true;
+  push.error = null;
+  rerender?.();
+  try {
+    push.sub = await enablePush();
+    toast('Notifications activées');
+  } catch (e) {
+    push.error = e instanceof Error ? e.message : 'Activation impossible.';
+  }
+  push.busy = false;
+  rerender?.();
+}
+
+async function onTestPush() {
+  try {
+    await testNotification();
+    toast('Notification envoyée');
+  } catch (e) {
+    push.error = e instanceof Error ? e.message : 'Test impossible.';
+    rerender?.();
+  }
+}
+
+function pushStatusRows(): HTMLElement[] {
+  const st = pushStatus();
+  const yes = (ok: boolean, a: string, b: string) => (ok ? a : b);
+  const perm = st.permission === 'granted' ? 'autorisées'
+    : st.permission === 'denied' ? 'refusées (Réglages iPhone → Notifications → Cap)'
+    : st.permission === 'default' ? 'pas encore demandées' : 'non gérées ici';
+  return [
+    infoRow({
+      icon: ICON.plane,
+      title: yes(st.installed, 'App sur l’écran d’accueil', 'Pas encore sur l’écran d’accueil'),
+      detail: yes(st.installed, 'Parfait, c’est là que les notifications marchent.', 'Dans Safari : Partager, puis « Sur l’écran d’accueil ». Ouvre ensuite l’app depuis son icône.'),
+    }),
+    infoRow({
+      icon: ICON.spark,
+      title: yes(st.supported, 'Notifications prises en charge', 'Notifications non prises en charge ici'),
+      detail: yes(st.supported, `Permission : ${perm}`, 'Il faut l’app installée sur l’écran d’accueil, avec iOS 16.4 ou plus.'),
+    }),
+  ];
+}
+
+function pushGuide(json: string): HTMLElement {
+  const steps = [
+    'Touche « Copier » ci-dessous.',
+    'Sur GitHub, ouvre le dépôt de l’app, puis Settings.',
+    'Menu Secrets and variables → Actions.',
+    'New repository secret : nom PUSH_SUBSCRIPTION, valeur : colle le texte copié. Add secret.',
+    'Le secret VAPID_PRIVATE_KEY t’est donné à part : ajoute-le de la même façon.',
+    'Onglet Actions → Notifications push → Run workflow pour tester tout de suite.',
+  ];
+  return h('div', { class: 'stack push-guide' },
+    h('p', { class: 'small muted' }, 'Dernière étape, une seule fois : donner ton adresse de notification à GitHub, qui t’enverra les petits signaux aux bonnes heures.'),
+    h('pre', { class: 'push-json', 'aria-label': 'Abonnement aux notifications' }, json),
+    h('button', { type: 'button', class: 'btn primary block', onclick: () => void copy(json, 'push', 'Abonnement copié') }, 'Copier'),
+    fallbackBox('push'),
+    h('ol', { class: 'set-steps' }, steps.map((st) => h('li', null, st))),
+  );
+}
+
+function shortcutsGuide(): Child[] {
   const steps = [
     'Ouvre l’app Raccourcis, onglet Automatisation, puis touche +.',
     'Choisis « Heure de la journée » : 08:00, Quotidienne, et « Exécuter immédiatement ».',
@@ -123,22 +211,45 @@ function notificationsCard(): HTMLElement {
     'Ajoute « Obtenir un élément de la liste » : Élément aléatoire.',
     'Ajoute « Afficher la notification » avec cet élément. Terminé.',
   ];
+  return [
+    h('p', { class: 'small muted' }, 'Sans GitHub, l’app Raccourcis de ton iPhone peut t’afficher une citation chaque matin et un rappel le soir.'),
+    h('ol', { class: 'set-steps' }, steps.map((st) => h('li', null, st))),
+    h('button', {
+      type: 'button',
+      class: 'btn block',
+      onclick: () => void copy(QUOTES_FOR_SHORTCUT, 'quotes', 'Citations copiées'),
+    }, `Copier les ${QUOTES.length} citations`),
+    fallbackBox('quotes'),
+    h('p', { class: 'small muted' }, 'Pour le soir : une 2e automatisation à 20:30, « Afficher la notification » avec « Pense à noter ta journée ».'),
+  ];
+}
+
+function notificationsCard(): HTMLElement {
+  checkSubscription();
+  const st = pushStatus();
+  const granted = st.permission === 'granted';
+  const moments = PUSH_SLOTS.map((m) => m.label).join(' · ');
   return h('section', { class: 'card ux solo' },
     h('p', { class: 'small muted' },
-      'L’app ne peut pas t’envoyer de notifications elle-même : c’est l’app Raccourcis de ton iPhone qui s’en charge. Ça se règle une fois, en deux minutes.',
+      'Des petits messages pensés pour ta journée : ton sommeil, ton cycle, tes séances, et un mot doux les jours plus durs. Ils sont préparés sur ton téléphone : rien de personnel ne sort.',
     ),
-    infoRow({ icon: ICON.sun, title: 'Une citation chaque matin', detail: '08:00, avec une automatisation Raccourcis' }),
-    disclosure('Voir les étapes', () => [
-      h('ol', { class: 'set-steps' }, steps.map((st) => h('li', null, st))),
-      h('button', {
-        type: 'button',
-        class: 'btn primary block',
-        onclick: () => void copy(QUOTES_FOR_SHORTCUT, 'quotes', 'Citations copiées'),
-      }, `Copier les ${QUOTES.length} citations`),
-      fallbackBox('quotes'),
-    ], 'set-notif'),
-    infoRow({ icon: ICON.moon, title: 'Un rappel le soir', detail: 'Une 2e automatisation à 20:30 : « Afficher la notification » avec « Pense à noter ta journée ».' }),
-    infoRow({ icon: ICON.plane, title: 'L’app sur ton écran d’accueil', detail: 'Dans Safari : Partager, puis « Sur l’écran d’accueil ».' }),
+    infoRow({ icon: ICON.sun, title: '5 moments', detail: moments }),
+    ...pushStatusRows(),
+    h('button', {
+      type: 'button',
+      class: 'btn primary block push-cta',
+      disabled: push.busy,
+      onclick: () => void onEnablePush(),
+    }, push.busy ? 'Activation…' : push.sub && granted ? 'Réactiver les notifications' : 'Activer les notifications'),
+    !st.installed || !st.supported
+      ? h('p', { class: 'small muted' }, 'Ça ne marche que depuis l’app installée sur l’écran d’accueil, avec iOS 16.4 ou plus.')
+      : null,
+    push.error ? h('p', { class: 'small tone-bad', role: 'alert' }, push.error) : null,
+    granted
+      ? h('button', { type: 'button', class: 'btn block', onclick: () => void onTestPush() }, 'Tester une notif')
+      : null,
+    push.sub ? pushGuide(push.sub) : null,
+    disclosure('Alternative : Raccourcis iPhone', () => shortcutsGuide(), 'set-notif'),
   );
 }
 
@@ -326,7 +437,6 @@ function soonCard(): HTMLElement {
   const items: [string, string][] = [
     ['Garmin', 'Tes séances importées toutes seules, via Strava ou un export.'],
     ['Balance via Apple Santé', 'Ton poids récupéré sans le recopier.'],
-    ['Notifications push', 'Des rappels directement depuis l’app, sans Raccourcis.'],
     ['Lecture photo par IA', 'Optionnelle, avec une clé personnelle.'],
   ];
   return h('section', { class: 'card ux solo flat set-soon' },

@@ -1,6 +1,6 @@
 // "Aujourd'hui": the only screen opened every day. Built like a theme-park app home:
 // clear sections, one topic and one action per card, details folded away.
-// TA JOURNÉE (countdown, cycle, weigh-in) · quote band · TON ÉNERGIE · TA SÉANCE ·
+// TA JOURNÉE (coach word + check-ins + "J'ai craqué" + Sunday bilan, countdown, cycle, weigh-in) · quote band · TON ÉNERGIE · TA SÉANCE ·
 // CONSEILS DU JOUR (tips carousel) · TES PILIERS.
 
 import type { Screen, ScreenCtx } from './types';
@@ -18,6 +18,7 @@ import { adviceFor, cycleOn, cycleSettings, phaseLabel, TTC_TIPS, PREGNANCY_NOTE
 import { recoveryFlag, HABITS, habitScore, weekHabitStats } from '../lib/habits';
 import { quoteFor } from '../data/quotes';
 import { openOnboarding } from './onboarding';
+import { coachBlocks } from './coach';
 
 // ---------- transient UI state ----------
 /** Planned session ids whose "version mini" is unfolded. */
@@ -36,6 +37,7 @@ export const renderToday: Screen = (root, ctx) => {
 
   root.append(
     sectionTitle('Ta journée'),
+    ...(p.onboarded ? coachBlocks(date) : []),
     countdownCard(date, ctx),
     weighCard(date, ctx),
     quoteBand(date),
