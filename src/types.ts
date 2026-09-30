@@ -64,7 +64,7 @@ export interface BodyComp {
 }
 
 export type MealSlot = 'petit-dej' | 'dejeuner' | 'diner' | 'collation';
-export type MealSource = 'manuel' | 'favori' | 'photo' | 'hellofresh';
+export type MealSource = 'manuel' | 'favori' | 'photo' | 'hellofresh' | 'aliment';
 
 export interface Meal {
   id: string;
@@ -75,6 +75,11 @@ export interface Meal {
   carbs?: number;
   fat?: number;
   source: MealSource;
+  /** Quantity eaten in grams (food search). */
+  grams?: number;
+  /** Generic food id (lib/foods.ts) or Open Food Facts barcode. */
+  foodId?: string;
+  offCode?: string;
 }
 
 export interface FavoriteMeal {
@@ -129,6 +134,32 @@ export interface DayLog {
   habits?: Record<string, boolean>;
   /** Numbers copied from Garmin Connect. */
   wellbeing?: Wellbeing;
+  /** "J'ai craqué" moments, logged without judgement. */
+  slips?: Slip[];
+  /** Morning / evening check-ins with the coach. */
+  checkin?: Checkin;
+}
+
+export type SlipKind = 'sucre' | 'grignotage' | 'gros-repas' | 'alcool' | 'fastfood' | 'autre';
+export type SlipTrigger = 'stress' | 'fatigue' | 'faim' | 'emotion' | 'social' | 'regles' | 'ennui' | 'autre';
+
+export interface Slip {
+  id: string;
+  /** "HH:MM" local time. */
+  time: string;
+  kind: SlipKind;
+  triggers: SlipTrigger[];
+  /** Rough extra kcal if the user wants to note it (optional). */
+  kcal?: number;
+  note?: string;
+}
+
+export interface Checkin {
+  /** Morning: how do you feel, 1 (bad) … 5 (great). */
+  morningMood?: number;
+  /** Evening: how did the day go. */
+  evening?: 'bien' | 'moyen' | 'dur';
+  eveningNote?: string;
 }
 
 export interface Wellbeing {

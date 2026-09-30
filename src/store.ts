@@ -16,11 +16,11 @@ export const DEFAULT_PROFILE: Profile = {
   age: null,
   heightCm: 165,
   startWeight: 75,
-  startDate: '2026-09-30',
+  startDate: '2026-10-01',
   goalWeight: 65,
   finalGoalWeight: 60,
   goalDate: '2026-12-13',
-  lavageEnd: '2026-10-20',
+  lavageEnd: '2026-10-21',
   vacationStart: '2026-12-14',
   vacationEnd: '2026-12-28',
   prepStart: '2027-01-04',
@@ -35,6 +35,15 @@ type Listener = () => void;
 
 declare global {
   interface Window { claude?: { use(name: string): Promise<unknown> } }
+}
+
+/** The plan start moved from 30 Sept to 1 Oct 2026: shift profiles still on the old defaults. */
+function migrateProfile(p: Profile): Profile {
+  if (p.startDate === '2026-09-30') {
+    p.startDate = '2026-10-01';
+    if (p.lavageEnd === '2026-10-20') p.lavageEnd = '2026-10-21';
+  }
+  return p;
 }
 
 export function emptyDay(date: string): DayLog {
@@ -167,7 +176,7 @@ class Store {
       const raw = localStorage.getItem(LS_KEY);
       if (!raw) return;
       const data = JSON.parse(raw);
-      this.state.profile = { ...DEFAULT_PROFILE, ...data.profile };
+      this.state.profile = migrateProfile({ ...DEFAULT_PROFILE, ...data.profile });
       this.state.days = normalizeDays(data.days);
       this.state.favorites = normalizeFavorites(data.favorites);
     } catch {
