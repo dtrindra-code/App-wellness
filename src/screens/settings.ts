@@ -1,3 +1,4 @@
+import WIDGET_SCRIPT from '../../docs/widget/citation.js?raw';
 // "Plus" screen, in sections of info rows: TON PROFIL · TON CYCLE · TES DONNÉES · NOTIFICATIONS (web push) ·
 // APPARENCE · BIENTÔT. Long explanations are folded.
 
@@ -51,7 +52,7 @@ function setTheme(t: Theme) {
 
 // ---------- transient UI state ----------
 
-type CopyKey = 'quotes' | 'export' | 'push';
+type CopyKey = 'quotes' | 'export' | 'push' | 'widget';
 
 /** Text shown in a selectable textarea when the clipboard is refused. */
 let fallback: { key: CopyKey; text: string } | null = null;
@@ -433,6 +434,22 @@ function openImport() {
   ));
 }
 
+function widgetCard(): HTMLElement {
+  const steps = [
+    'Installe l’app gratuite « Scriptable » depuis l’App Store.',
+    'Touche « Copier le script » ci-dessous.',
+    'Dans Scriptable : + en haut à droite, colle, puis nomme le script « Citation ».',
+    'Écran verrouillé : reste appuyée → Personnaliser → Écran verrouillé → touche la zone des widgets → Scriptable.',
+    'Touche le widget ajouté → Script : « Citation ». Même chose possible sur l’écran d’accueil.',
+  ];
+  return h('section', { class: 'card ux solo' },
+    h('p', { class: 'small muted' }, 'La citation du jour sur ton écran verrouillé, la même que dans l’app. Elle change chaque nuit.'),
+    h('ol', { class: 'small', style: 'margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px' }, steps.map((t) => h('li', null, t))),
+    h('button', { type: 'button', class: 'btn primary block', onclick: () => void copy(WIDGET_SCRIPT, 'widget', 'Script copié') }, 'Copier le script'),
+    fallbackBox('widget'),
+  );
+}
+
 function soonCard(): HTMLElement {
   const items: [string, string][] = [
     ['Garmin', 'Tes séances importées toutes seules, via Strava ou un export.'],
@@ -472,6 +489,8 @@ export const renderSettings: Screen = (root, ctx) => {
     dataCard(),
     sectionTitle('Notifications'),
     notificationsCard(),
+    sectionTitle('Widget citation'),
+    widgetCard(),
     sectionTitle('Apparence'),
     themeCard(),
     sectionTitle('Bientôt'),

@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build && node scripts/to-artifact.mjs",
-    "build:pages": "tsc --noEmit && PAGES=1 vite build",
+    "build:pages": "tsc --noEmit && node scripts/make-quotes.mjs && PAGES=1 vite build",
     "preview:pages": "PAGES=1 vite preview --outDir dist-pages",
     "icons": "node scripts/make-icons.mjs",
     "typecheck": "tsc --noEmit",

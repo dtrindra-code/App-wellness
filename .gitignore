@@ -2,3 +2,4 @@ node_modules
 dist
 
 dist-pages
+public/quotes.json
