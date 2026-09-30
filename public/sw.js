@@ -1,7 +1,9 @@
-// Cap Maldives service worker: offline app shell + cached Google Fonts.
-// Data never goes through here: it lives in localStorage on the device.
+// Cap Maldives service worker: offline app shell + cached Google Fonts + push notifications.
+// Data never goes through here: it lives in localStorage on the device. For push, the app
+// pre-computes the day's coach messages into IndexedDB (src/lib/notify.ts); the push itself
+// only carries the slot name ({"slot":"matin"}), so nothing personal crosses the network.
 // Bump VERSION to drop old caches after a change to this file.
-const VERSION = 'v1';
+const VERSION = 'v2';
 const SHELL = `cap-shell-${VERSION}`;
 const FONTS = `cap-fonts-${VERSION}`;
 const START = new URL('./', self.location).href;
@@ -97,3 +99,110 @@ async function staleWhileRevalidate(req, event) {
   }
   return (await update) || Response.error();
 }
+
+// ---------- push notifications ----------
+
+const DB_NAME = 'cap-maldives';
+const DB_STORE = 'coach';
+const SLOTS = ['matin', 'midi', 'aprem', 'soir', 'bilan'];
+
+/** Used when the app hasn't been opened recently (no pre-computed message). */
+const GENERIC = {
+  matin: { title: 'Bonjour', body: 'Nouvelle journée, nouveau départ. Un grand verre d’eau et on y va, à ton rythme.' },
+  midi: { title: 'Pause déj', body: 'Prends le temps de manger assise, lentement. Des légumes, des protéines, et du plaisir.' },
+  aprem: { title: 'Petit point de l’aprem', body: 'Un verre d’eau, quelques pas, trois respirations. Tu fais du bon boulot.' },
+  soir: { title: 'Ta soirée', body: 'Deux minutes pour noter ta journée ? Pas pour juger : juste pour voir le chemin.' },
+  bilan: { title: 'Ton bilan de la semaine', body: 'Viens voir tout ce que tu as fait cette semaine. Chaque petit pas compte.' },
+};
+
+const pad2 = (n) => String(n).padStart(2, '0');
+const isoLocal = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+
+function slotFromHour(d) {
+  const h = d.getHours() + d.getMinutes() / 60;
+  if (d.getDay() === 0 && h >= 17) return 'bilan';
+  if (h < 11.5) return 'matin';
+  if (h < 15) return 'midi';
+  if (h < 18) return 'aprem';
+  return 'soir';
+}
+
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = () => {
+      if (!req.result.objectStoreNames.contains(DB_STORE)) req.result.createObjectStore(DB_STORE);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function readDay(date) {
+  const db = await openDB();
+  try {
+    return await new Promise((resolve, reject) => {
+      const req = db.transaction(DB_STORE, 'readonly').objectStore(DB_STORE).get(date);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+/** Today's (local date) message for the slot; tomorrow/yesterday cover timezone edge cases. */
+async function messageFor(slot) {
+  const now = new Date();
+  const day = (n) => isoLocal(new Date(now.getFullYear(), now.getMonth(), now.getDate() + n));
+  for (const date of [day(0), day(1), day(-1)]) {
+    try {
+      const rec = await readDay(date);
+      const m = rec && rec.msgs && rec.msgs[slot];
+      if (m && m.title && m.body) return m;
+    } catch (_) {
+      break; // IndexedDB unavailable: generic message
+    }
+  }
+  return GENERIC[slot];
+}
+
+self.addEventListener('push', (event) => {
+  event.waitUntil(
+    (async () => {
+      let slot = null;
+      try {
+        const data = event.data ? event.data.json() : null;
+        if (data && SLOTS.includes(data.slot)) slot = data.slot;
+      } catch (_) {
+        /* not JSON: guess from the time */
+      }
+      if (!slot) slot = slotFromHour(new Date());
+      const msg = await messageFor(slot);
+      const scope = self.registration.scope;
+      // iOS requires every push to show a notification (userVisibleOnly).
+      await self.registration.showNotification(msg.title, {
+        body: msg.body,
+        icon: new URL('icons/icon-192.png', scope).href,
+        badge: new URL('icons/icon-192.png', scope).href,
+        tag: `cap-${slot}`,
+        data: { url: scope, slot },
+      });
+    })(),
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const scope = self.registration.scope; // …/App-wellness/
+  const target = (event.notification.data && event.notification.data.url) || scope;
+  event.waitUntil(
+    (async () => {
+      const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      for (const w of wins) {
+        if (w.url.startsWith(scope) && 'focus' in w) return w.focus();
+      }
+      return self.clients.openWindow(target);
+    })(),
+  );
+});
