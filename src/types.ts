@@ -30,6 +30,14 @@ export interface Profile {
   basketDays: number[];
   /** Menstrual cycle settings (absent on old profiles: see DEFAULT_CYCLE). */
   cycle?: CycleSettings;
+  /** No swimming from this many days before a period starts (default 3). */
+  noSwimBefore?: number;
+  /** No swimming for this many days after a period ends (default 2). */
+  noSwimAfter?: number;
+  /** Minutes the user can run continuously at easy pace today (default 30): the plan's starting point. */
+  runBaseMin?: number;
+  /** Planned sessions per week on top of basketball (default 3; the half prep grows it to 5). */
+  sessionsPerWeek?: number;
 }
 
 export interface CycleSettings {
@@ -189,6 +197,12 @@ export interface PlannedSession {
   /** The "no motivation" fallback: ~15 min version. */
   mini?: string;
   optional?: boolean;
+  /** One short line tying the session to the day (cycle phase, basket…). */
+  why?: string;
+  /** The week's key session (placed in the follicular phase / fertile window). */
+  key?: boolean;
+  /** Why the plan changed something (e.g. swim replaced near the period). */
+  note?: string;
 }
 
 export type PhaseId = 'lavage' | 'progressive' | 'vacances' | 'prepa' | 'course' | 'avant';

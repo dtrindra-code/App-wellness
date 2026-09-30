@@ -1,5 +1,7 @@
-// "Poids" screen, in sections: TA TENDANCE (7-day average bubble, details folded) · TA COURBE
-// (chart + "Ajouter une pesée") · TA COMPOSITION · TES PESÉES (history folded).
+// "Progrès" tab (TabId 'weight'): the overall follow-up. Header + period switch
+// (Semaine / Mois / Depuis le début), LE MOT DU COACH, TON POIDS (7-day average bubble,
+// period change, chart + "Ajouter une pesée", composition and history folded), then
+// TON ASSIETTE · TON SPORT · TON ÉQUILIBRE · TON CYCLE (src/screens/progress-cards.ts).
 
 import type { Screen } from './types';
 import type { BodyComp, DayLog } from '../types';
@@ -11,6 +13,10 @@ import {
 import type { Sheet } from '../lib/ui';
 import { daysBetween, fmtDayMonth, fmtShort, today } from '../lib/dates';
 import { movingAverage, paceBreakdown, slopePerDay } from '../lib/nutrition';
+import { periodStats } from '../lib/stats';
+import type { Period, PeriodStats } from '../lib/stats';
+import { coachProgressCard, fmtSince } from './progress-coach';
+import { plateCard, sportCard, balanceCard, cycleCard } from './progress-cards';
 import { cycleOn, cycleSettings } from '../lib/cycle';
 import { aiImagesAvailable, askJSON, aiErrorMessage } from '../lib/ai';
 import { weightChart } from './weight-chart';
@@ -18,6 +24,7 @@ import type { ChartRange } from './weight-chart';
 
 // ---------- transient UI state ----------
 let chartRange: ChartRange = 'all';
+let period: Period = 'semaine';
 let confirmDelete: string | null = null;
 let aiImages: boolean | null = null;
 let importSlot: HTMLElement | null = null;
@@ -197,21 +204,40 @@ function fillImportSlot(slot: HTMLElement) {
 // ---------- sections ----------
 
 function header(): HTMLElement {
-  const p = store.profile;
-  const pregnant = cycleSettings(p).pregnant;
-  return h('header', { class: 'screen-head' },
+  return h('header', { class: 'screen-head pg-screen-head' },
     h('div', { class: 'stack', style: 'gap:6px' },
-      screenTitle('Poids'),
-      h('p', { class: 'subtitle' },
-        pregnant ? 'Mode grossesse · suivi pour info' : '',
-        pregnant ? '' : `Palier ${fmtKg(p.goalWeight)} kg le ${fmtDayMonth(p.goalDate)}`,
-        !pregnant && p.finalGoalWeight !== undefined && p.finalGoalWeight < p.goalWeight ? ` · objectif final ${fmtKg(p.finalGoalWeight)} kg` : '',
-      ),
+      screenTitle('Progrès'),
+      h('p', { class: 'subtitle' }, 'Ton suivi général, sans jugement'),
     ),
   );
 }
 
-function summary(): HTMLElement {
+const PERIODS: { value: Period; label: string }[] = [
+  { value: 'semaine', label: 'Semaine' },
+  { value: 'mois', label: 'Mois' },
+  { value: 'debut', label: 'Depuis le début' },
+];
+
+function periodBar(ps: PeriodStats): HTMLElement {
+  const { cur, prev, period: pd, empty } = ps.spans;
+  const t = today();
+  const range = cur.from === cur.to ? 'Aujourd’hui' : `Du ${fmtSince(cur.from)} ${cur.to === t ? 'à aujourd’hui' : `au ${fmtSince(cur.to)}`}`;
+  const cmp = prev ? ` · comparé ${pd === 'semaine' ? 'à la semaine dernière' : 'au mois dernier'}, à la même date` : '';
+  return h('div', { class: 'stack pg-period', style: 'gap:8px' },
+    segmented<Period>(PERIODS, period, (v) => {
+      period = v;
+      const root = document.getElementById('screen');
+      if (!root) return;
+      const y = window.scrollY;
+      root.replaceChildren();
+      renderWeight(root, { go: () => {} });
+      window.scrollTo(0, y);
+    }),
+    h('p', { class: 'small muted pg-range' }, empty ? `Ton plan démarre le ${fmtSince(store.profile.startDate)}.` : range + cmp),
+  );
+}
+
+function summary(ps: PeriodStats): HTMLElement {
   const p = store.profile;
   const ws = store.weights();
   const avg = currentAverage();
@@ -251,6 +277,14 @@ function summary(): HTMLElement {
     }
   }
   const pace = paceLine(avg);
+  const wd = ps.cur.weight.delta;
+  const when = ps.spans.period === 'semaine' ? 'cette semaine' : ps.spans.period === 'mois' ? 'ce mois-ci' : `depuis le ${fmtSince(ps.spans.cur.from)}`;
+  const periodLine = !pregnant && wd !== null
+    ? h('span', { class: 'chip num' + (wd <= -0.1 ? ' good' : '') }, `${Math.abs(wd) < 0.1 ? 'stable' : fmtDelta(wd) + ' kg'} ${when}`)
+    : null;
+  const goalLine = pregnant ? 'Mode grossesse · suivi pour info'
+    : `Palier ${fmtKg(p.goalWeight)} kg le ${fmtDayMonth(p.goalDate)}` +
+      (p.finalGoalWeight !== undefined && p.finalGoalWeight < p.goalWeight ? ` · objectif final ${fmtKg(p.finalGoalWeight)} kg` : '');
 
   return h('section', { class: 'card ux solo' },
     h('div', { class: 'td-energy' },
@@ -258,9 +292,10 @@ function summary(): HTMLElement {
       h('div', { class: 'td-energy-side', style: 'gap:6px' },
         trend ? h('span', { class: 'w-trend num' }, trend) : null,
         h('p', { class: 'small muted num' }, sentence),
-        chip ? h('div', null, chip) : null,
+        chip || periodLine ? h('div', { class: 'pg-chips' }, periodLine, chip) : null,
       ),
     ),
+    h('p', { class: 'small muted pg-goal' }, goalLine),
     disclosure('Voir le détail', () => [
       h('div', { class: 'grid-3' },
         stat(fmtKg(avg), 'kg', 'moyenne 7 j'),
@@ -332,11 +367,12 @@ const BODY_FIELDS: { k: keyof BodyComp; label: string; unit: string; better: 'do
   { k: 'bmr', label: 'BMR', unit: 'kcal', better: null, int: true },
 ];
 
-function bodyCard(): HTMLElement {
+/** Latest body composition with the change since the first measure (null when none logged). */
+function bodyContent(): HTMLElement {
   const withBody = Object.values(store.state.days)
     .filter((d) => d.body && Object.values(d.body).some((v) => typeof v === 'number'))
     .sort((a, b) => a.date.localeCompare(b.date));
-  const card = h('section', { class: 'card ux solo' });
+  const card = h('div', { class: 'stack' });
   const latest = withBody[withBody.length - 1];
   const firstB = withBody[0];
   card.appendChild(infoRow({
@@ -384,6 +420,7 @@ function historyCard(): HTMLElement {
         title: ws.length ? `${ws.length} pesée${ws.length > 1 ? 's' : ''}` : 'Aucune pesée pour l’instant',
         detail: last ? h('span', { class: 'num' }, `Dernière : ${fmtKg(last.weight)} kg · ${fmtShort(last.date)}`) : 'Le matin, au réveil, c’est le plus fiable.',
       }),
+      disclosure('Voir ta composition', () => bodyContent(), 'w-body'),
       rows.length ? disclosure('Voir l’historique', () => historyList(ws, rows, draw), 'w-history') : '',
       slot,
     );
@@ -434,12 +471,18 @@ function historyList(ws: { date: string; weight: number }[], rows: { date: strin
 
 // ---------- screen ----------
 
-export const renderWeight: Screen = (root) => {
+export const renderWeight: Screen = (root, ctx) => {
+  const ps = periodStats(period, today(), store.state);
+  const cyc = cycleCard(ps, store.state);
   root.append(
     header(),
-    sectionTitle('Ta tendance'), summary(),
-    sectionTitle('Ta courbe'), chartCard(),
-    sectionTitle('Ta composition'), bodyCard(),
-    sectionTitle('Tes pesées'), historyCard(),
+    periodBar(ps),
+    sectionTitle('Le mot du coach'), coachProgressCard(ps, store.state),
+    sectionTitle('Ton poids'), summary(ps), chartCard(), historyCard(),
+    sectionTitle('Ton assiette'), plateCard(ps),
+    sectionTitle('Ton sport'), sportCard(ps, store.state),
+    sectionTitle('Ton équilibre'), balanceCard(ps),
+    cyc ? sectionTitle('Ton cycle') : '', cyc ?? '',
   );
+  void ctx;
 };

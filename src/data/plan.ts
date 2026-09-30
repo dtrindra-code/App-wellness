@@ -1,30 +1,65 @@
-// Training plan generator: pré-prépa (general triathlon prep from zero) then half-ironman prep.
-// Pure and deterministic from the Profile; memoized on the fields that matter.
+// Training plan engine: pré-prépa (general triathlon prep) then half-ironman prep.
+//
+// Rules, in priority order (see docs/SPEC.md, "V7 — plan sportif"):
+//   1. The menstrual cycle comes first. Sessions are placed from the cycle forecast (logged period
+//      starts + average length, future cycles projected; recomputed as soon as a period is logged).
+//      Règles: gentle only. Folliculaire / fenêtre fertile: the week's key session. Lutéale: endurance,
+//      no hard intensity. Prémenstruel: short and easy. Retard: easy/moderate. Pregnancy: ≤ modéré.
+//   2. No swimming from `noSwimBefore` days before a period, during it, and `noSwimAfter` days after.
+//   3. Strength ≤ 30 min. Mobility 10–20 min as optional extras.
+//   4. Running starts from `runBaseMin` of continuous easy running (no run-walk), ≤ ~10 %/week,
+//      a lighter week every 4th week, strides / light tempo only in the follicular or fertile phase.
+//   5. `sessionsPerWeek` sessions on top of basketball; no hard session on a basket day or the day after.
+//   6. Bike = outdoor rides, weekend first. 7. Every session has a ~15 min "version mini".
+// Pure and deterministic from (profile, logged cycle days, as-of date); memoized.
 
 import type { DayLog, Intensity, PhaseId, PlannedSession, PlanWeek, Profile, SeasonBlock, Sport } from '../types';
-import { addDays, mondayOf, today, weekday } from '../lib/dates';
+import { addDays, daysBetween, mondayOf, today, weekday } from '../lib/dates';
 import { phaseOn } from '../lib/nutrition';
-import { adviceFor, cycleOn, cycleSettings, phaseLabel } from '../lib/cycle';
-import type { CycleInfo } from '../lib/cycle';
+import { cycleModel, cycleSettings, loggedPeriodDays, periodStarts, phaseLabel, positionOn } from '../lib/cycle';
+import type { CycleInfo, CycleModel, CyclePhase } from '../lib/cycle';
+
+type Days = Record<string, DayLog>;
+const NO_DAYS: Days = {};
+
+// ---------- settings ----------
+
+export const PLAN_DEFAULTS = { noSwimBefore: 3, noSwimAfter: 2, runBaseMin: 30, sessionsPerWeek: 3 } as const;
+
+export interface PlanSettings { noSwimBefore: number; noSwimAfter: number; runBaseMin: number; sessionsPerWeek: number }
+
+const clampInt = (v: unknown, lo: number, hi: number, dflt: number) => {
+  const n = typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : dflt;
+  return Math.max(lo, Math.min(hi, n));
+};
+
+export function planSettings(p: Profile): PlanSettings {
+  return {
+    noSwimBefore: clampInt(p.noSwimBefore, 0, 7, PLAN_DEFAULTS.noSwimBefore),
+    noSwimAfter: clampInt(p.noSwimAfter, 0, 7, PLAN_DEFAULTS.noSwimAfter),
+    runBaseMin: clampInt(p.runBaseMin, 10, 90, PLAN_DEFAULTS.runBaseMin),
+    sessionsPerWeek: clampInt(p.sessionsPerWeek, 1, 7, PLAN_DEFAULTS.sessionsPerWeek),
+  };
+}
 
 // ---------- public API ----------
 
-/** Every week from the Monday of profile.startDate to the race week. */
-export function planWeeks(p: Profile): PlanWeek[] {
-  return build(p).weeks;
+/** Every week from the Monday of profile.startDate to the race week. Pass the logged days to follow the cycle. */
+export function planWeeks(p: Profile, days: Days = NO_DAYS, asOf?: string): PlanWeek[] {
+  return build(p, days, asOf).weeks;
 }
 
-export function weekOf(date: string, p: Profile): PlanWeek | undefined {
-  return planWeeks(p).find((w) => date >= w.start && date < addDays(w.start, 7));
+export function weekOf(date: string, p: Profile, days: Days = NO_DAYS, asOf?: string): PlanWeek | undefined {
+  return planWeeks(p, days, asOf).find((w) => date >= w.start && date < addDays(w.start, 7));
 }
 
-export function sessionsOn(date: string, p: Profile): PlannedSession[] {
-  return weekOf(date, p)?.sessions.filter((s) => s.date === date) ?? [];
+export function sessionsOn(date: string, p: Profile, days: Days = NO_DAYS, asOf?: string): PlannedSession[] {
+  return weekOf(date, p, days, asOf)?.sessions.filter((s) => s.date === date) ?? [];
 }
 
 /** Big blocks from the start to the race, for the season overview. */
 export function season(p: Profile): SeasonBlock[] {
-  return build(p).blocks;
+  return blocks(p, calendar(p));
 }
 
 /** The season block containing `date` (clamped to the plan), if any. */
@@ -32,72 +67,208 @@ export function blockOn(date: string, p: Profile): SeasonBlock | undefined {
   return season(p).find((b) => date >= b.start && date <= b.end);
 }
 
-// ---------- internals ----------
-
-type BlockKey = 'reprise' | 'fondations' | 'consolidation' | 'vacances' | 'base' | 'construction' | 'specifique' | 'affutage';
-
-interface Spec {
-  sport: Sport;
-  title: string;
-  minutes: number;
-  intensity: Intensity;
-  details: string;
-  mini?: string;
-  optional?: boolean;
-  /** Longest session of the week: goes on Saturday or Sunday. */
-  long?: boolean;
+/** What the plan knows about one day: cycle phase (estimate), no-swim window, basket. */
+export interface PlanDay {
+  date: string;
+  phase: CyclePhase | null;
+  /** True when the phase comes from a projected (future or back-projected) cycle. */
+  projected: boolean;
+  noSwim: boolean;
+  basket: boolean;
+  afterBasket: boolean;
 }
 
-interface Built { weeks: PlanWeek[]; blocks: SeasonBlock[] }
+export function planDay(date: string, p: Profile, days: Days = NO_DAYS, asOf?: string): PlanDay {
+  const b = build(p, days, asOf);
+  return dayCtx(date, b.fc, b.basket, b.cal, p);
+}
+
+/** One-line summary: "3 séances + basket · séance clé mardi (phase folliculaire)". */
+export function weekSummary(week: PlanWeek, p: Profile, days: Days = NO_DAYS, asOf?: string): string {
+  const req = week.sessions.filter((s) => !s.optional && s.sport !== 'other');
+  const basket = (p.basketDays ?? []).length > 0 && !week.sessions.every((s) => s.optional);
+  const count = req.length
+    ? `${req.length} séance${req.length > 1 ? 's' : ''}${basket ? ' + basket' : ''}`
+    : week.sessions.length ? 'tout est optionnel' : 'repos';
+  const key = week.sessions.find((s) => s.key);
+  if (key) {
+    const ph = planDay(key.date, p, days, asOf).phase;
+    return `${count} · séance clé ${DAY_NAMES[weekday(key.date)]}${ph ? ` (${PHASE_WORD[ph]})` : ''}`;
+  }
+  if (!req.length) return count;
+  const b = build(p, days, asOf);
+  if (!b.fc) return count;
+  return `${count} · pas de séance clé : semaine en endurance, calée sur ton cycle`;
+}
+
+/** Short label for a phase tag. */
+export const PHASE_SHORT: Record<CyclePhase, string> = {
+  regles: 'règles', folliculaire: 'follic.', fertile: 'fertile', luteale: 'lutéale', premenstruel: 'pré-règles', retard: 'retard',
+};
+
+const PHASE_WORD: Record<CyclePhase, string> = {
+  regles: 'règles', folliculaire: 'phase folliculaire', fertile: 'fenêtre fertile', luteale: 'phase lutéale', premenstruel: 'avant les règles', retard: 'retard',
+};
+
+const DAY_NAMES = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'];
+
+// ---------- memo ----------
+
+interface Built {
+  weeks: PlanWeek[];
+  fc: Forecast | null;
+  basket: Set<number>;
+  cal: Calendar;
+}
 
 let memoKey = '';
-let memoVal: Built = { weeks: [], blocks: [] };
+let memoVal: Built | null = null;
 
-function build(p: Profile): Built {
-  const key = JSON.stringify([p.startDate, p.lavageEnd, p.vacationStart, p.vacationEnd, p.prepStart, p.raceDate, p.raceName, p.basketDays ?? []]);
-  if (key === memoKey) return memoVal;
-  memoVal = compute(p);
+function cycleKey(days: Days): string {
+  const bleed: string[] = [];
+  const lh: string[] = [];
+  for (const d of Object.values(days)) {
+    const c = d.cycle;
+    if (!c) continue;
+    if (c.period === 'start') bleed.push('s' + d.date);
+    else if (c.period === 'flow') bleed.push('f' + d.date);
+    if (c.lh === 'pos') lh.push(d.date);
+  }
+  return bleed.sort().join(',') + '|' + lh.sort().join(',');
+}
+
+function build(p: Profile, days: Days, asOf?: string): Built {
+  const at = asOf ?? today();
+  const key = JSON.stringify([
+    p.startDate, p.lavageEnd, p.vacationStart, p.vacationEnd, p.prepStart, p.raceDate, p.raceName, p.basketDays ?? [],
+    cycleSettings(p), p.sex, planSettings(p), cycleKey(days), at,
+  ]);
+  if (memoVal && key === memoKey) return memoVal;
+  memoVal = compute(p, days, at);
   memoKey = key;
   return memoVal;
 }
 
-const r5 = (n: number) => Math.max(5, Math.round(n / 5) * 5);
-const r100 = (n: number) => Math.round(n / 100) * 100;
-const lerp = (a: number, b: number, t: number) => a + (b - a) * Math.max(0, Math.min(1, t));
-const minD = (a: string, b: string) => (a < b ? a : b);
-const maxD = (a: string, b: string) => (a > b ? a : b);
-const fmtM = (m: number) => `${m.toLocaleString('fr-FR')} m`;
-const fmtH = (min: number) => {
-  const hh = Math.floor(min / 60);
-  const mm = min % 60;
-  return hh ? `${hh} h${mm ? String(mm).padStart(2, '0') : ''}` : `${mm} min`;
-};
+// ---------- cycle forecast ----------
 
-const MINI: Record<Sport, string> = {
-  swim: '15 min de nage facile, la nage que tu veux, pauses autorisées.',
-  bike: '10 min de vélo tranquille + 5 min d’étirements.',
-  run: '5 min de marche, puis 5 × (1 min de course lente / 1 min de marche).',
-  strength: '2 tours : 10 squats, 20 s de gainage, 8 pompes sur les genoux. Et c’est tout.',
-  walk: '15 min de marche dehors, sans objectif.',
-  mobility: '5 min de respiration calme + 10 min d’étirements doux.',
-  basket: '15 min de shoots tranquilles.',
-  other: '15 min de mouvement, ce qui te fait envie.',
-};
+interface Pos { phase: CyclePhase; projected: boolean; info: CycleInfo }
+
+interface Forecast {
+  pos(date: string): Pos | null;
+  noSwim: Set<string>;
+}
+
+function phaseFrom(date: string, day: number, periodLen: number, fs: string, fe: string, next: string): CyclePhase {
+  if (day <= periodLen) return 'regles';
+  if (date >= fs && date <= fe) return 'fertile';
+  if (date < fs) return 'folliculaire';
+  if (daysBetween(date, next) <= 5) return 'premenstruel';
+  return 'luteale';
+}
+
+/** Cycle forecast used by the plan. Null when tracking is off, in pregnancy mode, or with nothing logged. */
+function forecast(p: Profile, days: Days, asOf: string, cal: Calendar, set: PlanSettings): Forecast | null {
+  const cs = cycleSettings(p);
+  if (!cs.tracking || cs.pregnant || p.sex === 'm') return null;
+  const starts = periodStarts(days);
+  if (!starts.length) return null;
+  const at = asOf > starts[starts.length - 1] ? asOf : starts[starts.length - 1];
+  const m: CycleModel = cycleModel(at, p, days);
+  const len = m.length;
+  const first = starts[0];
+
+  const nextOf = (cycleStart: string, projected: boolean): string => {
+    if (projected) return addDays(cycleStart, len);
+    const c = m.cycles.find((x) => x.start === cycleStart);
+    if (c?.next) return c.next;
+    if (c && m.info && m.info.cycleStart === cycleStart) return m.info.nextPeriod;
+    return addDays(cycleStart, len);
+  };
+
+  // Period length: logged bleeding days when longer than the setting; projected periods use their average.
+  const logged = starts.map((s) => loggedPeriodDays(s, days)).filter((n): n is number => n !== null);
+  const avgLogged = logged.length ? Math.round(logged.reduce((a, b) => a + b, 0) / logged.length) : 0;
+  const periodLen = (start: string) => Math.max(starts.includes(start) ? loggedPeriodDays(start, days) ?? avgLogged : avgLogged, cs.periodLength);
+
+  const cache = new Map<string, Pos | null>();
+  const pos = (date: string): Pos | null => {
+    if (cache.has(date)) return cache.get(date)!;
+    let out: Pos | null;
+    if (date < first) {
+      // Before the first logged period: project cycles backwards (estimate).
+      const k = Math.ceil(daysBetween(date, first) / len);
+      const start = addDays(first, -k * len);
+      const next = addDays(start, len);
+      const ovulation = addDays(next, -cs.lutealLength);
+      const fs = addDays(ovulation, -5);
+      const fe = addDays(ovulation, 1);
+      const day = daysBetween(start, date) + 1;
+      const phase = phaseFrom(date, day, cs.periodLength, fs, fe, next);
+      out = { phase, projected: true, info: { day, length: len, phase, cycleStart: start, ovulation, fertileStart: fs, fertileEnd: fe, nextPeriod: next, ovulationFromLH: false, lateBy: 0 } };
+    } else {
+      const dp = positionOn(m, date);
+      if (!dp) out = null;
+      else {
+        const next = nextOf(dp.cycleStart, dp.projected);
+        out = {
+          phase: dp.phase, projected: dp.projected,
+          info: {
+            day: dp.day, length: len, phase: dp.phase, cycleStart: dp.cycleStart, ovulation: dp.ovulation,
+            fertileStart: dp.fertileStart, fertileEnd: dp.fertileEnd, nextPeriod: next, ovulationFromLH: dp.ovulationFromLH,
+            lateBy: dp.phase === 'retard' ? daysBetween(next, date) : 0,
+          },
+        };
+      }
+    }
+    if (out && out.phase !== 'retard' && out.info.day <= periodLen(out.info.cycleStart)) {
+      out = { ...out, phase: 'regles', info: { ...out.info, phase: 'regles' } };
+    }
+    cache.set(date, out);
+    return out;
+  };
+
+  // No-swim window around every period: logged, back-projected and projected ones.
+  const noSwim = new Set<string>();
+  const from = addDays(mondayOf(cal.start), -7);
+  const to = addDays(cal.race, 7);
+  const mark = (a: string, b: string) => {
+    for (let d = a < from ? from : a; d <= b && d <= to; d = addDays(d, 1)) noSwim.add(d);
+  };
+  const all: string[] = [...starts];
+  for (let s = addDays(first, -len); addDays(s, len + set.noSwimAfter) >= from; s = addDays(s, -len)) all.push(s);
+  if (m.predictedFrom) for (let s = m.predictedFrom; addDays(s, -set.noSwimBefore) <= to; s = addDays(s, len)) all.push(s);
+  for (const s of all) mark(addDays(s, -set.noSwimBefore), addDays(s, periodLen(s) - 1 + set.noSwimAfter));
+  // Any bleeding day actually logged, and the days after it.
+  for (const d of Object.values(days)) {
+    if (d.cycle?.period === 'start' || d.cycle?.period === 'flow') mark(d.date, addDays(d.date, set.noSwimAfter));
+  }
+  // Late period: it can come any day.
+  for (let d = m.info?.nextPeriod ?? to; d <= at && d <= to; d = addDays(d, 1)) if (pos(d)?.phase === 'retard') mark(d, addDays(d, set.noSwimAfter));
+
+  return { pos, noSwim };
+}
+
+// ---------- calendar ----------
+
+type BlockKey = 'reprise' | 'fondations' | 'consolidation' | 'vacances' | 'base' | 'construction' | 'specifique' | 'affutage';
+type Major = 'pre' | 'vac' | 'prep';
 
 interface Calendar {
+  start: string;
   w1: string;
   fondStart: string;
   consStart: string;
   vacStart: string;
+  vacEnd: string;
   prepStart: string;
-  baseStart: string;
   buildStart: string;
   specStart: string;
   taperStart: string;
   race: string;
-  consWeeks: number;
-  vacEnd: string;
 }
+
+const minD = (a: string, b: string) => (a < b ? a : b);
+const maxD = (a: string, b: string) => (a > b ? a : b);
 
 function calendar(p: Profile): Calendar {
   const w1 = mondayOf(p.startDate);
@@ -106,22 +277,13 @@ function calendar(p: Profile): Calendar {
   const race = p.raceDate;
   const fondStart = minD(addDays(w1, 21), vacStart);
   const consStart = minD(addDays(w1, 56), vacStart);
-  let consWeeks = 0;
-  for (let m = mondayOf(consStart); addDays(m, 3) < vacStart; m = addDays(m, 7)) if (addDays(m, 3) >= consStart) consWeeks++;
-
   const prepMon = mondayOf(prepStart);
   const raceMon = mondayOf(race);
   const taperStart = maxD(prepStart, addDays(raceMon, -7));
   const specStart = maxD(prepStart, addDays(raceMon, -35));
-  const remWeeks = Math.max(0, Math.round(dayDiff(prepMon, mondayOf(specStart)) / 7));
+  const remWeeks = Math.max(0, Math.round(daysBetween(prepMon, mondayOf(specStart)) / 7));
   const buildStart = maxD(prepStart, addDays(prepMon, Math.ceil(remWeeks / 2) * 7));
-  return { w1, fondStart, consStart, vacStart, prepStart, baseStart: prepStart, buildStart, specStart, taperStart, race, consWeeks, vacEnd: p.vacationEnd };
-}
-
-function dayDiff(a: string, b: string): number {
-  const [y1, m1, d1] = a.split('-').map(Number);
-  const [y2, m2, d2] = b.split('-').map(Number);
-  return Math.round((Date.UTC(y2, m2 - 1, d2) - Date.UTC(y1, m1 - 1, d1)) / 86_400_000);
+  return { start: p.startDate, w1, fondStart, consStart, vacStart, vacEnd: p.vacationEnd, prepStart, buildStart, specStart, taperStart, race };
 }
 
 function blockKeyOn(date: string, c: Calendar): BlockKey {
@@ -135,367 +297,671 @@ function blockKeyOn(date: string, c: Calendar): BlockKey {
   return 'affutage';
 }
 
-type Major = 'pre' | 'vac' | 'prep';
 const majorOf = (k: BlockKey): Major =>
   k === 'vacances' ? 'vac' : k === 'reprise' || k === 'fondations' || k === 'consolidation' ? 'pre' : 'prep';
 
-function compute(p: Profile): Built {
-  const c = calendar(p);
-  const basket = new Set((p.basketDays ?? []).filter((d) => d >= 0 && d <= 6));
-  const weeks: PlanWeek[] = [];
-  if (c.w1 > c.race) return { weeks, blocks: [] };
+// ---------- day context ----------
 
-  const raceMon = mondayOf(c.race);
-  let index = 1;
-  for (let mon = c.w1; mon <= raceMon; mon = addDays(mon, 7), index++) {
-    const thu = maxD(addDays(mon, 3), p.startDate);
-    const key = blockKeyOn(minD(thu, c.race), c);
-    const phase: PhaseId = phaseOn(maxD(mon, p.startDate), p).id;
-
-    // Race week: fixed layout relative to race day.
-    if (mon === raceMon) {
-      weeks.push({ index, start: mon, phase, focus: 'Semaine de course. Tu as fait le travail : repose-toi et fais-toi confiance.', sessions: raceWeek(p, c, basket) });
-      continue;
-    }
-
-    const { specs, focus } = weekSpecs(key, mon, c);
-    const available: number[] = [];
-    for (let d = 0; d < 7; d++) {
-      const date = addDays(mon, d);
-      if (date < p.startDate || date > c.race || basket.has(d)) continue;
-      if (majorOf(blockKeyOn(date, c)) !== majorOf(key)) continue;
-      available.push(d);
-    }
-    // Pré-prépa and holidays build a habit: never two sessions on one day.
-    weeks.push({ index, start: mon, phase, focus, sessions: schedule(mon, specs, available, basket, majorOf(key) === 'prep') });
-  }
-
-  return { weeks, blocks: blocks(p, c) };
+interface DayCtx extends PlanDay {
+  pos: Pos | null;
 }
 
-// ---------- week templates ----------
-
-function weekSpecs(key: BlockKey, mon: string, c: Calendar): { specs: Spec[]; focus: string } {
-  switch (key) {
-    case 'reprise': return reprise(Math.round(dayDiff(c.w1, mon) / 7));
-    case 'fondations': return fondations(Math.round(dayDiff(mondayOf(c.fondStart), mon) / 7));
-    case 'consolidation': {
-      const j = Math.round(dayDiff(mondayOf(c.consStart), mon) / 7);
-      return consolidation(j, c.consWeeks);
-    }
-    case 'vacances': return vacances(addDays(mon, 3) > c.vacEnd);
-    default: return prepa(key, mon, c);
-  }
-}
-
-function reprise(k: number): { specs: Spec[]; focus: string } {
-  const focus = [
-    'On installe l’habitude, pas la performance.',
-    'Même heure, même sac prêt : le plus dur, c’est de partir.',
-    'Trois semaines de suite, c’est déjà une routine. Bravo d’être là.',
-  ][Math.min(k, 2)];
-  const swim = [
-    '10 × 25 m de crawl tranquille, 30 s de repos entre chaque. Souffle bien dans l’eau et relâche les épaules. Si le crawl coince, alterne avec la brasse.',
-    '100 m pour t’échauffer, la nage que tu veux. 8 × 25 m d’éducatifs (battements avec planche, un bras) puis 6 × 50 m de crawl souple, 30 s de repos.',
-    '200 m d’échauffement. 4 × 100 m de crawl tranquille, 30 s de repos. Pense à expirer longuement dans l’eau.',
-  ][Math.min(k, 2)];
-  const run = [
-    '8 × (1 min de course très lente / 2 min de marche). Tu dois pouvoir parler en courant.',
-    '8 × (1 min 30 de course lente / 1 min 30 de marche). Même allure que la semaine dernière, juste un peu plus longtemps.',
-    '6 × (2 min de course lente / 1 min de marche). Si c’est trop, reviens à la version de la semaine 2 sans scrupule.',
-  ][Math.min(k, 2)];
-  const bikeMin = [30, 30, 35][Math.min(k, 2)];
-  const specs: Spec[] = [
-    { sport: 'swim', title: 'Natation technique', minutes: [25, 30, 30][Math.min(k, 2)], intensity: 'facile', details: swim, mini: '10 min de nage facile + 5 min de battements avec planche.' },
-    { sport: 'bike', title: 'Vélo tranquille', minutes: bikeMin, intensity: 'facile', long: true, details: `${bikeMin} min à une allure où tu peux discuter. Home trainer, vélo dehors ou marche rapide : c’est pareil pour cette semaine.`, mini: MINI.bike },
-    { sport: 'run', title: 'Course-marche', minutes: [25, 30, 30][Math.min(k, 2)], intensity: 'facile', details: `5 min de marche pour démarrer. ${run}`, mini: MINI.run },
-    k === 1
-      ? { sport: 'strength', title: 'Renfo doux', minutes: 20, intensity: 'facile', optional: true, details: '2 tours : 12 squats, 20 s de gainage, 8 pompes sur les genoux, 10 ponts fessiers. Lent et propre.', mini: MINI.strength }
-      : { sport: 'mobility', title: 'Mobilité', minutes: 15, intensity: 'facile', optional: true, details: 'Hanches, dos, épaules : 5 mouvements lents, 1 min chacun, puis 5 min de respiration allongée.', mini: '5 min de respiration calme + 5 min d’étirements.' },
-  ];
-  return { specs, focus };
-}
-
-function fondations(k: number): { specs: Spec[]; focus: string } {
-  const i = Math.min(k, 4);
-  const focus = [
-    'On pose les fondations : un peu plus long, toujours facile.',
-    'Régulière plutôt que forte. Tu construis quelque chose de solide.',
-    'Tu nages plus longtemps sans t’arrêter : c’est ça, le progrès.',
-    'Écoute ton corps. Une mini vaut mieux qu’une séance sautée.',
-    'Fin des fondations. Regarde d’où tu pars : c’est déjà beaucoup.',
-  ][i];
-  const cont = [300, 400, 550, 700, 900][i];
-  const bike = [45, 50, 55, 60, 60][i];
-  const run = [
-    { m: 30, t: '5 × (3 min de course / 1 min de marche).' },
-    { m: 30, t: '4 × (5 min de course / 1 min de marche).' },
-    { m: 30, t: '3 × (7 min de course / 1 min de marche).' },
-    { m: 30, t: '20 min de course continue, très lente. Marcher 1 min si besoin, c’est permis.' },
-    { m: 35, t: '25 min de course continue, allure conversation.' },
-  ][i];
-  const swimHard = i >= 1;
-  const specs: Spec[] = [
-    {
-      sport: 'swim', title: swimHard ? 'Natation endurance' : 'Natation continue', minutes: [35, 40, 40, 45, 45][i], intensity: swimHard ? 'modéré' : 'facile',
-      details: `200 m d’échauffement avec éducatifs. Puis ${fmtM(cont)} de crawl continu, tranquille : si besoin, 10 s au bord et tu repars.${swimHard ? ' Pour finir, 4 × 50 m un peu plus vite, 30 s de repos.' : ''}`,
-      mini: '15 min de nage facile, en continu si possible.',
-    },
-    { sport: 'bike', title: 'Vélo endurance', minutes: bike, intensity: 'facile', long: true, details: `${bike} min en endurance : respiration calme, tu pédales rond, sans à-coups. Bois une gorgée toutes les 15 min.`, mini: MINI.bike },
-    { sport: 'run', title: i >= 3 ? 'Course facile' : 'Course-marche', minutes: run.m, intensity: 'facile', details: `5 min de marche rapide pour démarrer. ${run.t}`, mini: MINI.run },
-    {
-      sport: 'strength', title: 'Renfo', minutes: 25, intensity: 'facile', optional: i === 0,
-      details: '3 tours : 12 squats, 10 fentes par jambe, 30 s de gainage, 10 pompes sur les genoux, 12 tirages élastique. Bien placé, sans te presser.',
-      mini: MINI.strength,
-    },
-  ];
-  return { specs, focus };
-}
-
-function consolidation(j: number, n: number): { specs: Spec[]; focus: string } {
-  const light = j % 4 === 3;
-  const brick = j >= n - 2;
-  const f = light ? 0.7 : 1;
-  const step = Math.min(j, 3);
-  const dist = r100((1200 + step * 100) * f);
-  const bikeMin = Math.min(75, 60 + step * 5);
-  const runMin = r5((30 + Math.min(step, 1) * 5) * f);
-  const focus = light
-    ? 'Semaine plus légère : le corps progresse pendant le repos.'
-    : brick
-      ? 'Premiers enchaînements vélo-course : découvre la sensation, sans chrono.'
-      : ['On consolide. Tu es plus solide qu’il y a deux mois.', 'Un peu de rythme sur le vélo, le reste reste facile.', 'Garde de l’envie en réserve : on vise la régularité.'][j % 3];
-
-  const specs: Spec[] = [
-    {
-      sport: 'swim', title: 'Natation', minutes: r5(45 * f), intensity: 'facile',
-      details: `${fmtM(dist)} au total. 300 m d’échauffement, puis ${light ? '2' : '3'} × ${fmtM(r100((dist - 400) / (light ? 2 : 3)))} de crawl régulier, 30 s de repos. 100 m souples pour finir.`,
-      mini: MINI.swim,
-    },
-  ];
-  if (brick && !light) {
-    specs.push({ sport: 'bike', title: 'Enchaînement vélo-course', minutes: 50, intensity: 'modéré', long: true, details: '40 min de vélo en endurance, puis tu changes de chaussures vite et tu cours 10 min très tranquille. Les jambes bizarres au début, c’est normal.', mini: '10 min de vélo + 5 min de course très lente.' });
-    specs.push({ sport: 'bike', title: 'Vélo tranquille', minutes: 45, intensity: 'facile', optional: true, details: '45 min en endurance, pour le plaisir.', mini: MINI.bike });
-  } else if (light) {
-    const m = r5(bikeMin * f);
-    specs.push({ sport: 'bike', title: 'Vélo endurance', minutes: m, intensity: 'facile', long: true, details: `${m} min tranquilles, sans bloc de rythme cette semaine.`, mini: MINI.bike });
-  } else {
-    specs.push({ sport: 'bike', title: 'Vélo avec du rythme', minutes: bikeMin, intensity: 'modéré', long: true, details: `15 min d’échauffement. 3 × 6 min à allure soutenue mais contrôlée, 4 min faciles entre. Le reste en endurance (${bikeMin} min au total).`, mini: MINI.bike });
-  }
-  specs.push({ sport: 'run', title: 'Course facile', minutes: runMin, intensity: 'facile', details: `${runMin - 5} min en aisance, tu peux parler. Puis 4 lignes droites de 20 s en accélérant doucement, retour en marchant.`, mini: MINI.run });
-  specs.push({ sport: 'strength', title: 'Renfo', minutes: r5(30 * f), intensity: 'facile', details: '3 tours : 15 squats, 10 fentes sautées ou non, 40 s de gainage, 10 pompes, 12 tirages élastique, 15 ponts fessiers.', mini: MINI.strength });
-  return { specs, focus };
-}
-
-function vacances(returning: boolean): { specs: Spec[]; focus: string } {
-  if (returning) {
-    return {
-      focus: 'Retour en douceur. On reprend le fil sans rien rattraper.',
-      specs: [
-        { sport: 'swim', title: 'Natation tranquille', minutes: 30, intensity: 'facile', optional: true, details: '30 min de nage facile, avec quelques longueurs de battements.', mini: MINI.swim },
-        { sport: 'bike', title: 'Vélo tranquille', minutes: 40, intensity: 'facile', optional: true, long: true, details: '40 min en endurance pour dérouiller les jambes.', mini: MINI.bike },
-        { sport: 'mobility', title: 'Mobilité', minutes: 15, intensity: 'facile', optional: true, details: 'Hanches, dos, épaules : 5 mouvements lents, 1 min chacun.', mini: MINI.mobility },
-      ],
-    };
-  }
+function dayCtx(date: string, fc: Forecast | null, basket: Set<number>, cal: Calendar, p: Profile): DayCtx {
+  const onHoliday = (d: string) => d >= cal.vacStart && d <= cal.vacEnd;
+  const isBasket = (d: string) => d >= p.startDate && basket.has(weekday(d)) && !onHoliday(d);
+  const pos = fc ? fc.pos(date) : null;
   return {
-    focus: 'Vacances : bouge pour le plaisir, rien n’est obligatoire.',
-    specs: [
-      { sport: 'swim', title: 'Nage dans le lagon', minutes: 25, intensity: 'facile', optional: true, details: '20 à 30 min de nage le long de la plage, tranquille. Reste près du bord, avec quelqu’un en vue, et de la crème solaire.', mini: '10 min de nage + 5 min à flotter.' },
-      { sport: 'walk', title: 'Balade pieds nus', minutes: 45, intensity: 'facile', optional: true, long: true, details: 'Une marche ou une petite rando, au rythme des pauses photo.', mini: MINI.walk },
-      { sport: 'mobility', title: 'Étirements face à la mer', minutes: 15, intensity: 'facile', optional: true, details: 'Au lever : hanches, dos, épaules, 1 min par mouvement, puis quelques respirations lentes.', mini: MINI.mobility },
-    ],
+    date,
+    phase: pos?.phase ?? null,
+    projected: pos?.projected ?? false,
+    noSwim: fc ? fc.noSwim.has(date) : false,
+    basket: isBasket(date),
+    afterBasket: isBasket(addDays(date, -1)),
+    pos,
   };
 }
 
-function prepa(key: BlockKey, mon: string, c: Calendar): { specs: Spec[]; focus: string } {
-  const prepMon = mondayOf(c.prepStart);
-  const q = Math.max(0, Math.round(dayDiff(prepMon, mon) / 7));
-  const totalBuild = Math.max(1, Math.round(dayDiff(prepMon, mondayOf(c.taperStart)) / 7) - 1);
-  const t = q / totalBuild;
-  const recovery = key !== 'affutage' && (q + 1) % 4 === 0;
-  const f = recovery ? 0.65 : 1;
+// ---------- session texts ----------
 
-  if (key === 'affutage') {
-    return {
-      focus: 'Affûtage : moins de volume, un peu de rythme. Tu gardes la fraîcheur pour le jour J.',
-      specs: [
-        { sport: 'swim', title: 'Natation allure course', minutes: 45, intensity: 'modéré', details: '2 000 m : 400 m souples, 4 × 200 m à allure course, 20 s de repos, le reste facile.', mini: MINI.swim },
-        { sport: 'bike', title: 'Vélo rappel', minutes: 60, intensity: 'modéré', details: '60 min dont 3 × 5 min à allure course. Vérifie ton vélo et ton ravitaillement.', mini: MINI.bike },
-        { sport: 'run', title: 'Course rappel', minutes: 40, intensity: 'modéré', details: '40 min faciles dont 3 × 3 min à allure half, 2 min trot entre.', mini: MINI.run },
-        { sport: 'bike', title: 'Sortie vélo tranquille', minutes: 90, intensity: 'facile', long: true, details: '1 h 30 en endurance, sans forcer. Teste ta tenue de course.', mini: MINI.bike },
-        { sport: 'run', title: 'Course facile', minutes: 45, intensity: 'facile', long: true, details: '45 min tranquilles, juste pour le plaisir.', mini: MINI.run },
-      ],
-    };
-  }
+const r5 = (n: number) => Math.max(5, Math.round(n / 5) * 5);
+const r100 = (n: number) => Math.round(n / 100) * 100;
+const fmtM = (m: number) => `${m.toLocaleString('fr-FR')} m`;
+const fmtH = (min: number) => {
+  const hh = Math.floor(min / 60);
+  const mm = min % 60;
+  return hh ? `${hh} h${mm ? String(mm).padStart(2, '0') : ''}` : `${mm} min`;
+};
 
-  const specs: Spec[] = [];
-  let focus: string;
-  if (key === 'base') {
-    const swim = r100(lerp(1500, 2200, t * 2) * f);
-    const longBike = r5(lerp(90, 120, t * 2) * f);
-    const longRun = r5(lerp(50, 70, t * 2) * f);
-    const run = r5(lerp(35, 45, t * 2) * f);
-    focus = recovery ? 'Semaine de récupération : on lève le pied, c’est prévu.' : ['Base : du volume facile, beaucoup de facile.', 'Tu construis le moteur. Patience, ça paie.', 'Facile aujourd’hui, fort en juin.'][q % 3];
-    specs.push(
-      { sport: 'swim', title: 'Natation endurance', minutes: r5(swim / 1000 * 25 + 10), intensity: 'facile', details: `${fmtM(swim)} : 300 m d’échauffement, séries de 200 à 400 m en crawl régulier, 20 s de repos.`, mini: MINI.swim },
-      { sport: 'bike', title: 'Vélo endurance', minutes: r5(60 * f), intensity: 'facile', details: `${fmtH(r5(60 * f))} en endurance, cadence souple.`, mini: MINI.bike },
-      { sport: 'bike', title: 'Sortie longue vélo', minutes: longBike, intensity: 'facile', long: true, details: `${fmtH(longBike)} en endurance. Mange un peu toutes les 30 min, bois régulièrement.`, mini: MINI.bike },
-      { sport: 'run', title: 'Course facile', minutes: run, intensity: 'facile', details: `${run} min en aisance respiratoire, puis 4 lignes droites de 20 s.`, mini: MINI.run },
-      { sport: 'run', title: 'Sortie longue course', minutes: longRun, intensity: 'facile', long: true, details: `${fmtH(longRun)} très tranquille. Marcher 1 min toutes les 10 min, c’est une stratégie, pas un échec.`, mini: MINI.run },
-      { sport: 'strength', title: 'Renfo', minutes: 25, intensity: 'facile', optional: true, details: '3 tours : squats, fentes, gainage, pompes, tirages élastique, ponts fessiers.', mini: MINI.strength },
-    );
-  } else if (key === 'construction') {
-    const tb = lerp(0, 1, (t - 0.5) * 2);
-    const swim = r100(lerp(2000, 2500, tb) * f);
-    const longBike = r5(lerp(120, 165, tb) * f);
-    const longRun = r5(lerp(70, 90, tb) * f);
-    const brick = !recovery && q % 2 === 1;
-    focus = recovery ? 'Semaine de récupération : on lève le pied, c’est prévu.' : ['Construction : un peu de rythme, beaucoup de régularité.', 'Tu enchaînes. Tu deviens triathlète.', 'Les séances dures sont courtes ; le reste reste facile.'][q % 3];
-    specs.push(
-      { sport: 'swim', title: 'Natation rythme', minutes: r5(swim / 1000 * 22 + 10), intensity: recovery ? 'facile' : 'modéré', details: `${fmtM(swim)} : 400 m souples, ${recovery ? '4' : '6'} × 200 m à allure course, 20 s de repos, le reste facile.`, mini: MINI.swim },
-      { sport: 'bike', title: 'Vélo tempo', minutes: r5(75 * f), intensity: recovery ? 'facile' : 'modéré', details: recovery ? `${fmtH(r5(75 * f))} en endurance.` : '20 min d’échauffement, 3 × 12 min à allure half, 5 min faciles entre, retour au calme.', mini: MINI.bike },
-      { sport: 'bike', title: brick ? 'Sortie longue + course' : 'Sortie longue vélo', minutes: longBike + (brick ? 15 : 0), intensity: 'facile', long: true, details: `${fmtH(longBike)} en endurance, les 20 dernières minutes à allure half.${brick ? ' Enchaîne 15 min de course facile.' : ''} Mange toutes les 30 min.`, mini: MINI.bike },
-      { sport: 'run', title: 'Course tempo', minutes: r5(45 * f), intensity: recovery ? 'facile' : 'modéré', details: recovery ? `${r5(45 * f)} min faciles.` : '15 min faciles, 3 × 8 min à allure half, 2 min trot entre, 5 min au calme.', mini: MINI.run },
-      { sport: 'run', title: 'Sortie longue course', minutes: longRun, intensity: 'facile', long: true, details: `${fmtH(longRun)} en aisance. Teste ce que tu mangeras le jour J.`, mini: MINI.run },
-    );
-    if (!recovery) specs.push({ sport: 'strength', title: 'Renfo', minutes: 25, intensity: 'facile', details: '3 tours : squats, fentes, gainage, pompes, tirages élastique, ponts fessiers.', mini: MINI.strength });
-  } else {
-    const ts = key === 'specifique' ? lerp(0, 1, (t - 0.75) * 4) : 1;
-    const longBike = r5(lerp(150, 180, ts) * f);
-    const longRun = r5(lerp(90, 105, ts) * f);
-    focus = recovery ? 'Semaine de récupération : on lève le pied, c’est prévu.' : ['Spécifique : tu répètes la course, à ton allure.', 'Allure half, ravito, transitions : tu fignoles.', 'Presque au bout. On garde l’envie intacte.'][q % 3];
-    specs.push(
-      { sport: 'swim', title: 'Natation allure course', minutes: r5(65 * f), intensity: recovery ? 'facile' : 'modéré', details: `${fmtM(r100(2500 * f))} : 400 m souples, 3 × 500 m à allure course, 30 s de repos, le reste facile. En eau libre si possible.`, mini: MINI.swim },
-      { sport: 'swim', title: 'Natation facile', minutes: 40, intensity: 'facile', optional: recovery, details: '1 800 m tranquilles, technique et respiration des deux côtés.', mini: MINI.swim },
-      { sport: 'bike', title: 'Vélo tempo', minutes: r5(90 * f), intensity: recovery ? 'facile' : 'modéré', details: recovery ? `${fmtH(r5(90 * f))} en endurance.` : '20 min d’échauffement, 3 × 15 min à allure half, 5 min faciles entre.', mini: MINI.bike },
-      { sport: 'bike', title: 'Enchaînement long', minutes: longBike + 20, intensity: recovery ? 'facile' : 'modéré', long: true, details: `${fmtH(longBike)} de vélo dont 1 h à allure half, puis 20 min de course à allure half. Ravito comme le jour J.`, mini: MINI.bike },
-      { sport: 'run', title: 'Sortie longue course', minutes: longRun, intensity: 'facile', long: true, details: `${fmtH(longRun)} en aisance, les 15 dernières minutes à allure half si tout va bien.`, mini: MINI.run },
-      { sport: 'run', title: 'Course facile', minutes: r5(40 * f), intensity: 'facile', details: `${r5(40 * f)} min faciles + 6 lignes droites de 20 s.`, mini: MINI.run },
-    );
+const MINI = {
+  swim: '15 min de nage facile, la nage que tu veux, pauses au bord autorisées.',
+  bike: 'Mauvais temps ou peu d’envie : 30 min de marche rapide, ou 15 min d’étirements. Pas besoin de home trainer.',
+  run: '15 min de course très facile, en continu, juste pour le plaisir.',
+  strength: '2 tours : 10 squats, 10 ponts fessiers, 20 s de gainage. Moins de 10 min et c’est fait.',
+  walk: '15 min de marche dehors, sans objectif.',
+  mobility: '5 min de respiration calme + 5 min d’étirements doux.',
+};
+
+const STRENGTH_A = 'Circuit jambes & gainage : 12 squats, 10 fentes arrière par jambe, 15 ponts fessiers, 30 s de gainage ventral, 20 s de gainage latéral par côté, 15 montées sur pointes (mollets).';
+const STRENGTH_B = 'Circuit dos, épaules & chevilles : 12 tirages à l’élastique (dos, utile en nage), 12 rotations externes d’épaule à l’élastique, 8 pompes sur les genoux, 30 s de planche, 12 squats, 30 s d’équilibre sur une jambe par côté (chevilles).';
+
+const MOBILITY_TXT = 'Hanches (fente basse, 45 s par côté), arrière des cuisses, mollets contre un mur, dos (chat-vache × 8), épaules (bras croisé, 30 s par côté), puis 2 min de respiration lente allongée.';
+
+// ---------- why lines ----------
+
+interface WhyOpts { key?: boolean; ttc: boolean; pregnant: boolean; afterBasket: boolean; sport: Sport; gentle?: boolean }
+
+function whyLine(ph: CyclePhase | null, o: WhyOpts): string {
+  if (o.pregnant) return 'Mode grossesse : modéré au maximum, sans intensité en course. À valider avec ta sage-femme.';
+  const after = o.afterBasket ? ' Lendemain de basket : on reste facile.' : '';
+  switch (ph) {
+    case 'regles':
+      return 'Règles : en douceur, rien d’obligatoire. Bouger tranquillement peut soulager les crampes.';
+    case 'folliculaire':
+      return o.key ? 'Phase folliculaire : énergie haute, c’est ta séance clé de la semaine.' : `Phase folliculaire : l’énergie remonte, profite-en sans forcer.${after}`;
+    case 'fertile':
+      return o.key ? 'Fenêtre fertile : énergie au top, c’est ta séance clé de la semaine.' : `Fenêtre fertile : énergie au top, reste raisonnable.${after}`;
+    case 'luteale':
+      return o.ttc
+        ? `Phase lutéale, période d’attente : modéré, bois bien et évite de surchauffer.${after}`
+        : `Phase lutéale : endurance tranquille, le corps chauffe plus vite.${after}`;
+    case 'premenstruel':
+      return 'Avant les règles : plus court et facile. La version mini est parfaite aussi.';
+    case 'retard':
+      return 'Règles en retard : facile à modéré en attendant, sans pression.';
+    default:
+      return o.afterBasket ? 'Lendemain de basket : on reste facile.' : 'Note tes règles dans Cycle : le plan se calera sur tes phases.';
   }
-  return { specs, focus };
 }
 
-function raceWeek(p: Profile, c: Calendar, basket: Set<number>): PlannedSession[] {
-  const race = c.race;
+// ---------- intensity rules ----------
+
+const RANK: Record<Intensity, number> = { facile: 0, 'modéré': 1, soutenu: 2 };
+const minI = (a: Intensity, b: Intensity): Intensity => (RANK[a] <= RANK[b] ? a : b);
+
+/** Ceiling for a day: cycle phase, pregnancy, basket the day before. */
+function dayCap(d: DayCtx, pregnant: boolean): Intensity {
+  if (pregnant) return 'modéré';
+  let cap: Intensity = 'soutenu';
+  switch (d.phase) {
+    case 'regles': case 'premenstruel': cap = 'facile'; break;
+    case 'luteale': case 'retard': cap = 'modéré'; break;
+    default: break;
+  }
+  if (d.basket || d.afterBasket) cap = minI(cap, 'modéré');
+  return cap;
+}
+
+/** Volume factor for a day from the cycle phase. */
+function dayFactor(d: DayCtx): number {
+  switch (d.phase) {
+    case 'regles': return 0.75;
+    case 'premenstruel': return 0.8;
+    case 'retard': return 0.9;
+    default: return 1;
+  }
+}
+
+const keyPhase = (d: DayCtx) => d.phase === 'folliculaire' || d.phase === 'fertile';
+
+// ---------- weekly volumes ----------
+
+interface Vol {
+  /** Longest run of the week (the key run), minutes. */
+  run: number;
+  /** Outdoor ride, minutes. */
+  bike: number;
+  swim: number;
+  /** Swim distance (m) for prep sessions. */
+  swimM: number;
+  strength: number;
+  light: boolean;
+}
+
+const RUN_STEP = 1.08;
+const BIKE_STEP = 1.11;
+
+/**
+ * Running and riding levels carried from week to week. A level only grows after a
+ * normal week that really had that session (a run replaced by a walk does not count),
+ * by ≤ 10 %; every 4th week is lighter.
+ */
+interface Levels { run: number; bike: number; swimM: number }
+
+function preVol(k: number, key: BlockKey, lv: Levels): Vol {
+  const light = (k + 1) % 4 === 0;
+  const f = light ? 0.8 : 1;
+  const swim = key === 'reprise' ? 30 : key === 'fondations' ? 40 : 45;
+  return { run: Math.round(lv.run * f), bike: r5(lv.bike * (light ? 0.75 : 1)), swim: r5(swim * f), swimM: 0, strength: light ? 20 : 25, light };
+}
+
+function prepVol(q: number, key: BlockKey, lv: Levels): Vol {
+  const recovery = key !== 'affutage' && (q + 1) % 4 === 0;
+  const f = key === 'affutage' ? 0.6 : recovery ? 0.75 : 1;
+  const m = r100(lv.swimM * f);
+  return { run: Math.round(lv.run * f), bike: r5(lv.bike * f), swim: r5(m / 1000 * 22 + 10), swimM: m, strength: recovery || key === 'affutage' ? 20 : 30, light: recovery };
+}
+
+function grow(lv: Levels, vol: Vol, sessions: PlannedSession[], prep: boolean) {
+  if (vol.light) return;
+  const runCap = prep ? 105 : 60;
+  if (sessions.some((s) => s.sport === 'run' && !s.optional)) lv.run = Math.min(lv.run * (prep ? 1.07 : RUN_STEP), runCap);
+  if (sessions.some((s) => s.sport === 'bike' && !s.optional)) lv.bike = Math.min(lv.bike * (prep ? 1.08 : BIKE_STEP), prep ? 180 : 110);
+  if (prep) lv.swimM = Math.min(lv.swimM * 1.05, 2500);
+}
+
+// ---------- scheduling ----------
+
+type Kind = 'run' | 'bike' | 'swim' | 'strength' | 'run2' | 'swim2' | 'bike2';
+type Variant = 'runKey' | 'run' | 'walkForRun' | 'bike' | 'bikeForSwim' | 'swim' | 'mobForSwim' | 'strength' | 'mobForStrength' | 'run2' | 'swim2' | 'bike2';
+
+const VARIANT_SPORT: Record<Variant, Sport> = {
+  runKey: 'run', run: 'run', walkForRun: 'walk', bike: 'bike', bikeForSwim: 'bike', swim: 'swim', mobForSwim: 'mobility',
+  strength: 'strength', mobForStrength: 'mobility', run2: 'run', swim2: 'swim', bike2: 'bike',
+};
+
+interface Opt { day: number; v: Variant; cost: number }
+
+// Preference ranks (0 = best) by weekday, Monday = 0.
+const KEY_PREF = [5, 0, 1, 2, 4, 3, 0.5]; // Sunday long run when free, else Tuesday, Wednesday…
+const SWIM_PREF = [0, 1.5, 0.5, 2, 1, 3, 3];
+const RUN_PREF = [1, 0, 0.5, 1, 1.5, 2, 2];
+
+interface WeekCtx {
+  mon: string;
+  k: number;
+  q: number;
+  key: BlockKey;
+  vol: Vol;
+  days: DayCtx[];
+  /** Weekdays (0–6) inside the plan and this block. */
+  inPlan: boolean[];
+  pregnant: boolean;
+  ttc: boolean;
+  prep: boolean;
+}
+
+function optionsFor(kind: Kind, w: WeekCtx): Opt[] {
+  const out: Opt[] = [];
+  for (let d = 0; d < 7; d++) {
+    const x = w.days[d];
+    if (!w.inPlan[d] || x.basket) continue;
+    const regles = x.phase === 'regles';
+    switch (kind) {
+      case 'run':
+        if (!w.pregnant && keyPhase(x) && !x.afterBasket) out.push({ day: d, v: 'runKey', cost: KEY_PREF[d] });
+        if (!regles) out.push({ day: d, v: 'run', cost: 10 + (x.afterBasket ? 3 : 0) + RUN_PREF[d] });
+        else out.push({ day: d, v: 'walkForRun', cost: 30 + RUN_PREF[d] });
+        break;
+      case 'run2':
+        if (!regles) out.push({ day: d, v: 'run2', cost: 6 + RUN_PREF[d] + (x.afterBasket ? 1 : 0) });
+        else out.push({ day: d, v: 'walkForRun', cost: 26 });
+        break;
+      case 'bike':
+        out.push({ day: d, v: 'bike', cost: (d === 5 ? 0 : d === 6 ? 1 : 7) + (regles ? 1 : 0) });
+        break;
+      case 'bike2':
+        out.push({ day: d, v: 'bike2', cost: 6 + (d >= 5 ? 0 : 1) });
+        break;
+      case 'swim':
+      case 'swim2':
+        if (!x.noSwim) out.push({ day: d, v: kind, cost: SWIM_PREF[d] + (kind === 'swim2' ? 2 : 0) });
+        else out.push({ day: d, v: d >= 5 ? 'bikeForSwim' : 'mobForSwim', cost: 25 + SWIM_PREF[d] });
+        break;
+      case 'strength':
+        if (!regles) out.push({ day: d, v: 'strength', cost: 4 + (keyPhase(x) ? 0 : 2) + SWIM_PREF[d] * 0.2 });
+        else out.push({ day: d, v: 'mobForStrength', cost: 20 });
+        break;
+    }
+  }
+  return out;
+}
+
+const isHardVariant = (v: Variant) => v === 'runKey';
+
+/** Best assignment of the week's sessions to days (branch and bound). */
+function assign(kinds: Kind[], w: WeekCtx): { kind: Kind; opt: Opt }[] {
+  const opts = kinds.map((k) => ({ k, o: optionsFor(k, w).sort((a, b) => a.cost - b.cost) }));
+  const order = opts.map((_, i) => i).sort((a, b) => opts[a].o.length - opts[b].o.length);
+  const load: Variant[][] = Array.from({ length: 7 }, () => []);
+  const pick: (Opt | null)[] = kinds.map(() => null);
+  let best: (Opt | null)[] | null = null;
+  let bestCost = Infinity;
+  const doubleCost = 6;
+
+  const spacing = () => {
+    let c = 0;
+    for (let d = 0; d < 7; d++) {
+      const busy = (i: number) => i >= 0 && i < 7 && (load[i].length > 0 || w.days[i].basket);
+      if (load[d].length && busy(d - 1)) c += 0.4;
+    }
+    return c;
+  };
+
+  const rec = (i: number, cost: number) => {
+    if (cost >= bestCost) return;
+    if (i === order.length) {
+      const total = cost + spacing();
+      if (total < bestCost) { bestCost = total; best = [...pick]; }
+      return;
+    }
+    const idx = order[i];
+    for (const o of opts[idx].o) {
+      const here = load[o.day];
+      let extra = 0;
+      if (here.length) {
+        // Two sessions a day at most; in pré-prépa only strength attached to a run or a swim.
+        if (here.length >= 2) continue;
+        const sport = VARIANT_SPORT[o.v];
+        if (here.some((v) => VARIANT_SPORT[v] === sport)) continue;
+        if (isHardVariant(o.v) && here.some(isHardVariant)) continue;
+        const attach = o.v === 'strength' && here.some((v) => v === 'run' || v === 'runKey' || v === 'swim' || v === 'run2' || v === 'swim2');
+        if (!attach && !w.prep) continue;
+        extra = attach ? (w.prep ? 2 : 3) : doubleCost;
+      }
+      here.push(o.v);
+      pick[idx] = o;
+      rec(i + 1, cost + o.cost + extra);
+      here.pop();
+      pick[idx] = null;
+    }
+    // Leaving a session out is the very last resort.
+    pick[idx] = null;
+    rec(i + 1, cost + 200);
+  };
+  rec(0, 0);
+  const res: { kind: Kind; opt: Opt }[] = [];
+  (best ?? []).forEach((o, i) => { if (o) res.push({ kind: kinds[i], opt: o }); });
+  return res;
+}
+
+/** Sessions to place in a week, by priority. */
+function weekKinds(n: number): Kind[] {
+  return (['run', 'swim', 'bike', 'strength', 'run2', 'swim2', 'bike2'] as Kind[]).slice(0, Math.max(1, Math.min(7, n)));
+}
+
+// ---------- session builders ----------
+
+interface Spec {
+  sport: Sport;
+  title: string;
+  minutes: number;
+  intensity: Intensity;
+  details: string;
+  mini: string;
+  optional?: boolean;
+  key?: boolean;
+  note?: string;
+  why?: string;
+}
+
+function makeSession(v: Variant, w: WeekCtx, x: DayCtx): Spec {
+  const cap = dayCap(x, w.pregnant);
+  const f = dayFactor(x);
+  const vol = w.vol;
+  const light = vol.light;
+  const why = (key = false) => whyLine(x.phase, { key, ttc: w.ttc, pregnant: w.pregnant, afterBasket: x.afterBasket, sport: VARIANT_SPORT[v] });
+  const pre = !w.prep;
+
+  switch (v) {
+    case 'runKey': {
+      const m = Math.round(vol.run);
+      let title: string, details: string, intensity: Intensity;
+      const tempoWeek = !light && (w.key === 'fondations' ? w.k % 2 === 0 : w.key !== 'reprise');
+      if (w.key === 'reprise' || !tempoWeek) {
+        title = 'Course clé : endurance + lignes droites';
+        details = `${m} min en continu, allure conversation. Dans les 5 dernières minutes, 4 lignes droites de 15 s en accélérant progressivement, 45 s de trot entre. C’est ta sortie la plus longue de la semaine.`;
+        intensity = 'modéré';
+      } else if (w.key === 'fondations') {
+        title = 'Course clé : tempo léger';
+        details = `${m} min en tout : 12 min faciles, puis 3 × 3 min un peu plus vite (tu parles par mots, pas par phrases), 2 min de trot entre, et le reste tranquille.`;
+        intensity = 'soutenu';
+      } else if (w.key === 'consolidation') {
+        title = 'Course clé : tempo';
+        details = `${m} min en tout : 12 min faciles, 2 × 7 min à allure soutenue mais contrôlée, 3 min de trot entre, retour au calme en trottinant.`;
+        intensity = 'soutenu';
+      } else if (w.key === 'base') {
+        title = 'Sortie longue course';
+        details = `${fmtH(m)} en aisance, en continu. Les 10 dernières minutes un peu plus allongées si tout va bien, puis 4 lignes droites de 15 s.`;
+        intensity = 'modéré';
+      } else if (w.key === 'construction') {
+        title = 'Course clé : allure half';
+        details = `${fmtH(m)} en tout : 15 min faciles, 3 × 8 min à allure half, 2 min de trot entre, le reste en aisance.`;
+        intensity = 'soutenu';
+      } else if (w.key === 'specifique') {
+        title = 'Sortie longue spécifique';
+        details = `${fmtH(m)} en aisance, dont les 20 dernières minutes à allure half. Teste ce que tu mangeras le jour J.`;
+        intensity = 'soutenu';
+      } else {
+        title = 'Course rappel';
+        details = `${m} min faciles dont 3 × 3 min à allure half, 2 min de trot entre.`;
+        intensity = 'modéré';
+      }
+      return { sport: 'run', title, minutes: m, intensity: minI(intensity, cap), details, mini: MINI.run, key: true, why: why(true) };
+    }
+    case 'run':
+    case 'run2': {
+      // Pré-prépa: the week's only run keeps the level; in prep the key run is the long one.
+      const base = v === 'run2' ? vol.run * 0.65 : vol.run * (w.prep ? 0.85 : 1);
+      const m = Math.max(15, Math.round(base * f));
+      const details = `${m} min en continu, allure conversation (zone 2) : tu peux parler en phrases. Si le souffle monte, ralentis plutôt que de t’arrêter.`;
+      return { sport: 'run', title: v === 'run2' ? 'Course facile' : 'Course en endurance', minutes: m, intensity: 'facile', details, mini: MINI.run, why: why() };
+    }
+    case 'walkForRun':
+      return {
+        sport: 'walk', title: 'Marche tranquille', minutes: 30, intensity: 'facile',
+        details: '30 min de marche à ton rythme, dehors si possible. Ça détend le ventre et le dos.',
+        mini: MINI.walk, why: why(), note: 'Règles : on remplace la course par une marche tranquille. Ça compte pareil.',
+      };
+    case 'bike':
+    case 'bike2':
+    case 'bikeForSwim': {
+      if (x.phase === 'regles') {
+        const m = Math.min(40, r5(vol.bike * f));
+        return {
+          sport: 'bike', title: 'Vélo très tranquille', minutes: m, intensity: 'facile',
+          details: `${m} min dehors, tout doux, sur du plat : juste faire tourner les jambes, sans effort.`,
+          mini: MINI.bike, why: why(),
+          note: v === 'bikeForSwim' ? 'Pas de piscine autour des règles : on la remplace par un vélo tranquille.' : undefined,
+        };
+      }
+      if (v === 'bikeForSwim' || v === 'bike2') {
+        const m = v === 'bike2' ? r5(vol.bike * 0.6 * f) : Math.min(45, r5(vol.bike * 0.6 * f));
+        return {
+          sport: 'bike', title: 'Vélo tranquille', minutes: m, intensity: 'facile',
+          details: `${fmtH(m)} dehors en endurance facile, parcours plat. Tu dois pouvoir discuter tout du long.`,
+          mini: MINI.bike, why: why(),
+          note: v === 'bikeForSwim' ? 'Pas de piscine autour des règles : on la remplace par un vélo tranquille.' : undefined,
+        };
+      }
+      const m = r5(vol.bike * f);
+      const brick = w.prep && !light && (w.key === 'construction' || w.key === 'specifique') && w.q % 2 === 1 && x.phase !== 'premenstruel';
+      const natural: Intensity = m > 60 ? 'modéré' : 'facile';
+      const details = `Sortie vélo dehors, ${fmtH(m)} en endurance : tu peux discuter, tu pédales rond. Parcours plat ou vallonné doux, bois toutes les 15 min${m >= 75 ? ', mange un petit quelque chose toutes les 45 min' : ''}.` +
+        (w.prep && w.key !== 'base' && !light ? ' Les 20 dernières minutes à allure half si les jambes sont bonnes.' : '') +
+        (brick ? ' Enchaîne 15 min de course très facile en rentrant.' : '');
+      return {
+        sport: 'bike', title: brick ? 'Sortie vélo + course' : m >= 75 ? 'Sortie longue vélo' : 'Sortie vélo', minutes: m + (brick ? 15 : 0),
+        intensity: minI(natural, cap), details, mini: MINI.bike, why: why(),
+      };
+    }
+    case 'swim':
+    case 'swim2': {
+      if (!pre) {
+        const dist = v === 'swim2' ? r100(vol.swimM * 0.75) : vol.swimM;
+        const m = r5(Math.round((dist / 1000) * 22 + 10) * (x.phase === 'premenstruel' ? 0.85 : 1));
+        const tech = v === 'swim2' || w.key === 'base' || light;
+        return {
+          sport: 'swim', title: tech ? 'Natation endurance' : 'Natation allure course', minutes: m,
+          intensity: minI(tech ? 'facile' : 'modéré', cap),
+          details: tech
+            ? `${fmtM(dist)} : 300 m souples, 8 × 25 m d’éducatifs, puis des séries de 200 à 400 m en crawl régulier, 20 s de repos.`
+            : `${fmtM(dist)} : 400 m souples, ${light ? 4 : 6} × 200 m à allure course, 20 s de repos, le reste facile. Respiration des deux côtés.`,
+          mini: MINI.swim, why: why(),
+        };
+      }
+      const m = r5(vol.swim * (x.phase === 'premenstruel' ? 0.85 : 1));
+      let details: string;
+      if (w.key === 'reprise') {
+        details = `Technique, ${m} min : 200 m souples pour t’échauffer, 8 × 25 m d’éducatifs (battements avec planche, rattrapé, respiration tous les 3 temps), puis 6 × 50 m de crawl relâché, 30 s de repos. Expire longuement dans l’eau.`;
+      } else if (w.key === 'fondations') {
+        const cont = [400, 550, 700, 850, 900][Math.min(4, Math.max(0, w.k - 3))];
+        details = `${m} min : 200 m d’échauffement, 6 × 25 m d’éducatifs, puis ${fmtM(light ? 400 : cont)} de crawl continu et tranquille (10 s au bord si besoin), 100 m souples.`;
+      } else {
+        const dist = light ? 1000 : 1400;
+        details = `${fmtM(dist)} : 300 m souples, 3 × ${fmtM(r100((dist - 500) / 3))} de crawl régulier, 30 s de repos, 4 × 25 m de battements, 100 m retour au calme.`;
+      }
+      return { sport: 'swim', title: w.key === 'reprise' ? 'Natation technique' : 'Natation endurance', minutes: m, intensity: 'facile', details, mini: MINI.swim, why: why() };
+    }
+    case 'mobForSwim':
+    case 'mobForStrength':
+      return {
+        sport: 'mobility', title: 'Étirements & mobilité', minutes: 20, intensity: 'facile',
+        details: MOBILITY_TXT, mini: MINI.mobility, why: why(),
+        note: v === 'mobForSwim'
+          ? 'Pas de piscine autour des règles : on la remplace par des étirements doux.'
+          : 'Règles : on remplace le renfo par des étirements doux.',
+      };
+    case 'strength': {
+      const m = Math.min(30, x.phase === 'premenstruel' ? 20 : vol.strength);
+      const circuit = w.k % 2 === 0 ? STRENGTH_A : STRENGTH_B;
+      const rounds = m <= 20 ? 2 : 3;
+      return {
+        sport: 'strength', title: 'Renfo triathlon', minutes: m, intensity: 'facile',
+        details: `${m} min maximum. Échauffement 3 min (montées de genoux, moulinets de bras), puis ${rounds} tours, 1 min de pause entre. ${circuit}`,
+        mini: MINI.strength, why: why(),
+      };
+    }
+  }
+}
+
+function optionalStrength(w: WeekCtx, x: DayCtx): Spec {
+  const m = x.phase === 'premenstruel' || w.vol.light ? 20 : 25;
+  const circuit = w.k % 2 === 0 ? STRENGTH_A : STRENGTH_B;
+  return {
+    sport: 'strength', title: 'Renfo en complément', minutes: m, intensity: 'facile', optional: true,
+    details: `${m} min maximum, juste après ta séance ou le soir. ${m <= 20 ? 2 : 3} tours, 1 min de pause entre. ${circuit}`,
+    mini: MINI.strength,
+    why: w.pregnant ? 'Mode grossesse : renfo doux, sans bloquer la respiration. À valider avec ta sage-femme.' : x.phase === 'folliculaire' || x.phase === 'fertile'
+      ? 'Phase folliculaire : bon moment pour le renfo, il protège tes genoux et ton dos.'
+      : 'En complément, si l’envie est là : il protège tes genoux et ton dos.',
+  };
+}
+
+function optionalMobility(x: DayCtx, pregnant: boolean): Spec {
+  return {
+    sport: 'mobility', title: x.basket ? 'Étirements après le basket' : 'Étirements doux', minutes: x.basket ? 10 : 15, intensity: 'facile', optional: true,
+    details: x.basket
+      ? 'Le soir, après le basket : mollets, arrière des cuisses, hanches, 45 s par position, puis quelques respirations lentes.'
+      : MOBILITY_TXT,
+    mini: MINI.mobility,
+    why: pregnant
+      ? 'Mode grossesse : étirements doux, à valider avec ta sage-femme.'
+      : x.basket ? 'Soir de basket : quelques étirements pour bien récupérer.' : x.afterBasket ? 'Lendemain de basket : repos ou mobilité, c’est tout.' : x.phase === 'regles' ? 'Règles : bouger doucement peut soulager les crampes.' : 'Un moment pour toi, si l’envie est là.',
+  };
+}
+
+// ---------- weeks ----------
+
+function toSession(date: string, s: Spec): PlannedSession {
+  const out: PlannedSession = { id: `${date}-${s.sport}`, date, sport: s.sport, title: s.title, minutes: s.minutes, intensity: s.intensity, details: s.details };
+  if (s.mini) out.mini = s.mini;
+  if (s.optional) out.optional = true;
+  if (s.key) out.key = true;
+  if (s.why) out.why = s.why;
+  if (s.note) out.note = s.note;
+  return out;
+}
+
+const FOCUS: Record<BlockKey, string[]> = {
+  reprise: ['On installe l’habitude, pas la performance.', 'Même heure, même sac prêt : le plus dur, c’est de partir.', 'Trois semaines de suite, c’est déjà une routine. Bravo d’être là.'],
+  fondations: ['On pose les fondations : un peu plus long, toujours facile.', 'Régulière plutôt que forte. Tu construis quelque chose de solide.', 'Écoute ton corps. Une mini vaut mieux qu’une séance sautée.'],
+  consolidation: ['On consolide. Tu es plus solide qu’il y a deux mois.', 'Un peu de tempo quand ton cycle s’y prête, le reste reste facile.', 'Garde de l’envie en réserve : on vise la régularité.'],
+  vacances: ['Vacances : bouge pour le plaisir, rien n’est obligatoire.'],
+  base: ['Base : du volume facile, beaucoup de facile.', 'Tu construis le moteur. Patience, ça paie.', 'Facile aujourd’hui, fort en juin.'],
+  construction: ['Construction : un peu de rythme, beaucoup de régularité.', 'Tu enchaînes. Tu deviens triathlète.', 'Les séances dures sont courtes ; le reste reste facile.'],
+  specifique: ['Spécifique : tu répètes la course, à ton allure.', 'Allure half, ravito, transitions : tu fignoles.', 'Presque au bout. On garde l’envie intacte.'],
+  affutage: ['Affûtage : moins de volume, un peu de rythme. Tu gardes la fraîcheur pour le jour J.'],
+};
+
+function compute(p: Profile, days: Days, asOf: string): Built {
+  const cal = calendar(p);
+  const set = planSettings(p);
+  const cs = cycleSettings(p);
+  const pregnant = cs.pregnant && p.sex !== 'm';
+  const ttc = cs.ttc && !pregnant;
+  const basket = new Set((p.basketDays ?? []).filter((d) => d >= 0 && d <= 6));
+  const fc = forecast(p, days, asOf, cal, set);
+  const weeks: PlanWeek[] = [];
+  const built: Built = { weeks, fc, basket, cal };
+  if (cal.w1 > cal.race) return built;
+
+  const raceMon = mondayOf(cal.race);
+  const prepMon = mondayOf(cal.prepStart);
+  const lv: Levels = { run: set.runBaseMin, bike: 45, swimM: 1500 };
+  let prepStarted = false;
+  let index = 1;
+  for (let mon = cal.w1; mon <= raceMon; mon = addDays(mon, 7), index++) {
+    const thu = maxD(addDays(mon, 3), p.startDate);
+    const key = blockKeyOn(minD(thu, cal.race), cal);
+    const phase: PhaseId = phaseOn(maxD(mon, p.startDate), p).id;
+    const dctx = Array.from({ length: 7 }, (_, d) => dayCtx(addDays(mon, d), fc, basket, cal, p));
+
+    if (mon === raceMon) {
+      weeks.push({ index, start: mon, phase, focus: 'Semaine de course. Tu as fait le travail : repose-toi et fais-toi confiance.', sessions: raceWeek(p, cal, dctx, pregnant) });
+      continue;
+    }
+
+    const major = majorOf(key);
+    const inPlan = dctx.map((x) => x.date >= p.startDate && x.date <= cal.race && majorOf(blockKeyOn(x.date, cal)) === major);
+    const k = Math.round(daysBetween(cal.w1, mon) / 7);
+    const q = Math.max(0, Math.round(daysBetween(prepMon, mon) / 7));
+    const focusList = FOCUS[key];
+    const focusIdx = major === 'prep' ? q : k;
+
+    if (major === 'vac') {
+      weeks.push({ index, start: mon, phase, focus: addDays(mon, 3) > cal.vacEnd ? 'Retour en douceur. On reprend le fil sans rien rattraper.' : FOCUS.vacances[0], sessions: holidayWeek(dctx, inPlan, cal, pregnant, ttc) });
+      continue;
+    }
+
+    if (major === 'prep' && !prepStarted) {
+      // After the holidays: restart a little below the December level.
+      prepStarted = true;
+      lv.run = Math.max(set.runBaseMin, lv.run * 0.9);
+      lv.bike = Math.max(75, lv.bike * 0.85);
+    }
+    const vol = major === 'pre' ? preVol(k, key, lv) : prepVol(q, key, lv);
+    const w: WeekCtx = { mon, k, q, key, vol, days: dctx, inPlan, pregnant, ttc, prep: major === 'prep' };
+    let n = set.sessionsPerWeek;
+    if (major === 'prep') n = Math.max(n, key === 'affutage' ? 4 : q < 3 ? 4 : 5);
+    const planDays = inPlan.filter(Boolean).length;
+    if (planDays < 7) n = Math.min(n, Math.ceil((n * planDays) / 7));
+
+    const picks = assign(weekKinds(n), w);
+    const byDay = new Map<number, Spec[]>();
+    const add = (d: number, s: Spec) => {
+      const list = byDay.get(d) ?? [];
+      if (list.some((x) => x.sport === s.sport)) return false;
+      list.push(s);
+      byDay.set(d, list);
+      return true;
+    };
+    for (const { opt } of picks) add(opt.day, makeSession(opt.v, w, dctx[opt.day]));
+
+    // Swim moved away from its usual day because of the no-swim window: say so.
+    const usual = [0, 1, 2, 3, 4, 5, 6].filter((d) => inPlan[d] && !dctx[d].basket).sort((a, b) => SWIM_PREF[a] - SWIM_PREF[b])[0];
+    if (usual !== undefined && dctx[usual].noSwim) {
+      for (const [d, list] of byDay) for (const s of list) {
+        if (s.sport === 'swim' && d !== usual) s.note = `Piscine décalée : pas de nage autour des règles, alors on la place ${DAY_NAMES[d]}.`;
+      }
+    }
+
+    // Strength as an optional add-on when it is not one of the week's sessions.
+    if (!picks.some((x) => x.kind === 'strength')) {
+      const host = picks
+        .filter(({ opt }) => (opt.v === 'runKey' || opt.v === 'run' || opt.v === 'swim') && dctx[opt.day].phase !== 'regles' && dctx[opt.day].phase !== 'retard')
+        .sort((a, b) => (a.opt.v === 'runKey' ? -1 : 0) - (b.opt.v === 'runKey' ? -1 : 0))[0];
+      if (host) add(host.opt.day, optionalStrength(w, dctx[host.opt.day]));
+    }
+
+    // One optional stretching moment: an empty day after basket or in the period, else a basket evening.
+    const empty = (d: number) => inPlan[d] && !dctx[d].basket && !byDay.has(d);
+    const mobDay = [0, 1, 2, 3, 4, 5, 6].find((d) => empty(d) && (dctx[d].afterBasket || dctx[d].phase === 'regles'))
+      ?? [0, 1, 2, 3, 4, 5, 6].find((d) => inPlan[d] && dctx[d].basket)
+      ?? [0, 1, 2, 3, 4, 5, 6].find((d) => empty(d));
+    const hasMobility = [...byDay.values()].some((l) => l.some((x) => x.sport === 'mobility'));
+    if (mobDay !== undefined && !hasMobility) add(mobDay, optionalMobility(dctx[mobDay], pregnant));
+
+    const sessions: PlannedSession[] = [];
+    for (const d of [...byDay.keys()].sort((a, b) => a - b)) {
+      const list = byDay.get(d)!.sort((a, b) => Number(!!a.optional) - Number(!!b.optional));
+      for (const s of list) sessions.push(toSession(addDays(mon, d), s));
+    }
+    grow(lv, vol, sessions, major === 'prep');
+    weeks.push({ index, start: mon, phase, focus: focusList[focusIdx % focusList.length], sessions });
+  }
+  return built;
+}
+
+function holidayWeek(dctx: DayCtx[], inPlan: boolean[], cal: Calendar, pregnant: boolean, ttc: boolean): PlannedSession[] {
+  const out: PlannedSession[] = [];
+  const returning = addDays(dctx[0].date, 3) > cal.vacEnd;
+  const why = (x: DayCtx) => whyLine(x.phase, { ttc, pregnant, afterBasket: x.afterBasket, sport: 'other' });
+  const free = (d: number) => inPlan[d] && !dctx[d].basket;
+  const used = new Set<number>();
+  const pickDay = (prefs: number[], ok: (d: number) => boolean) => {
+    const d = prefs.find((x) => free(x) && !used.has(x) && ok(x));
+    if (d !== undefined) used.add(d);
+    return d;
+  };
+  // Swim (sea on holiday), walk, mobility: all optional.
+  const swimDay = pickDay([1, 3, 5, 0, 2, 4, 6], (d) => !dctx[d].noSwim);
+  if (swimDay !== undefined) {
+    const x = dctx[swimDay];
+    out.push(toSession(x.date, returning
+      ? { sport: 'swim', title: 'Natation tranquille', minutes: 30, intensity: 'facile', optional: true, details: '30 min de nage facile, avec quelques longueurs de battements.', mini: MINI.swim, why: why(x) }
+      : { sport: 'swim', title: 'Nage en mer', minutes: 25, intensity: 'facile', optional: true, details: 'Nage le long de la plage, tranquille, 20 à 30 min. Reste près du bord, avec quelqu’un en vue, et de la crème solaire.', mini: '10 min de nage + 5 min à flotter.', why: why(x) }));
+  } else {
+    const d = pickDay([1, 3, 5, 0, 2, 4, 6], () => true);
+    if (d !== undefined) {
+      const x = dctx[d];
+      out.push(toSession(x.date, { sport: 'walk', title: returning ? 'Marche tranquille' : 'Balade sur la plage', minutes: 30, intensity: 'facile', optional: true, details: '30 min de marche à ton rythme, pieds nus si tu peux.', mini: MINI.walk, why: why(x), note: 'Pas de baignade sportive autour des règles : on la remplace par une balade.' }));
+    }
+  }
+  const walkDay = pickDay([3, 5, 6, 2, 4, 0, 1], () => true);
+  if (walkDay !== undefined) {
+    const x = dctx[walkDay];
+    out.push(toSession(x.date, returning
+      ? { sport: 'bike', title: 'Vélo tranquille', minutes: 40, intensity: 'facile', optional: true, details: '40 min dehors en endurance pour dérouiller les jambes. Mauvais temps : une marche rapide.', mini: MINI.bike, why: why(x) }
+      : { sport: 'walk', title: 'Balade', minutes: 45, intensity: 'facile', optional: true, details: 'Une marche ou une petite rando, au rythme des pauses photo.', mini: MINI.walk, why: why(x) }));
+  }
+  const mobDay = pickDay([6, 5, 4, 0, 2, 1, 3], () => true);
+  if (mobDay !== undefined) {
+    const x = dctx[mobDay];
+    out.push(toSession(x.date, { sport: 'mobility', title: returning ? 'Mobilité' : 'Étirements face à la mer', minutes: 15, intensity: 'facile', optional: true, details: 'Au lever : hanches, dos, épaules, 1 min par mouvement, puis quelques respirations lentes.', mini: MINI.mobility, why: why(x) }));
+  }
+  return out.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function raceWeek(p: Profile, cal: Calendar, dctx: DayCtx[], pregnant: boolean): PlannedSession[] {
+  const race = cal.race;
+  const raceMon = mondayOf(race);
   const plan: { off: number; spec: Spec }[] = [
     { off: -5, spec: { sport: 'swim', title: 'Natation activation', minutes: 30, intensity: 'facile', details: '1 200 m faciles dont 4 × 100 m à allure course.', mini: MINI.swim } },
-    { off: -4, spec: { sport: 'bike', title: 'Vélo activation', minutes: 40, intensity: 'facile', details: '40 min faciles dont 3 × 3 min à allure course.', mini: MINI.bike } },
-    { off: -3, spec: { sport: 'run', title: 'Course activation', minutes: 25, intensity: 'facile', details: '20 min faciles + 4 lignes droites. Tu sors en te sentant bien.', mini: MINI.run } },
+    { off: -4, spec: { sport: 'bike', title: 'Vélo activation', minutes: 40, intensity: 'facile', details: '40 min dehors, faciles, dont 3 × 3 min à allure course.', mini: MINI.bike } },
+    { off: -3, spec: { sport: 'run', title: 'Course activation', minutes: 25, intensity: 'facile', details: '20 min faciles en continu + 4 lignes droites. Tu sors en te sentant bien.', mini: MINI.run } },
     { off: -1, spec: { sport: 'bike', title: 'Déblocage', minutes: 30, intensity: 'facile', details: '20 min de vélo tranquille + 10 min de course très lente. Prépare ton sac, dors tôt.', mini: '10 min de vélo, c’est suffisant.' } },
     {
       off: 0,
       spec: {
         sport: 'other', title: `Jour J : ${p.raceName || 'Half Ironman'}`, minutes: 420, intensity: 'soutenu',
         details: '1,9 km de nage, 90 km de vélo, 21,1 km de course. Pars plus doucement que tu le crois, mange et bois toutes les 20 min sur le vélo. Souris à l’arrivée.',
+        mini: '',
       },
     },
   ];
   const out: PlannedSession[] = [];
-  const raceMon = mondayOf(race);
   for (const { off, spec } of plan) {
     const date = addDays(race, off);
-    // Stay inside the race week (a mid-week race would spill into the taper week and clash with its sessions).
-    if (date < raceMon || date < c.prepStart || date < p.startDate) continue;
-    if (off !== 0 && basket.has(weekday(date))) continue;
-    out.push(toSession(date, spec));
+    if (date < raceMon || date < cal.prepStart || date < p.startDate) continue;
+    const x = dctx[weekday(date)];
+    if (off !== 0 && x.basket) continue;
+    const s: Spec = { ...spec, why: whyLine(x.phase, { ttc: false, pregnant, afterBasket: x.afterBasket, sport: spec.sport }) };
+    if (off === 0) {
+      s.why = 'Jour J : tout ce chemin pour ce moment. Profite.';
+      if (x.noSwim) s.note = 'Tes règles pourraient tomber autour du jour J : prévois ta protection préférée pour la nage, et écoute-toi.';
+      if (pregnant) s.note = 'Mode grossesse : la course est à valider avec ta sage-femme.';
+    } else if (spec.sport === 'swim' && x.noSwim) {
+      Object.assign(s, { sport: 'mobility', title: 'Étirements & mobilité', minutes: 20, details: MOBILITY_TXT, mini: MINI.mobility, note: 'Pas de piscine autour des règles : on la remplace par des étirements doux.' });
+    } else if (spec.sport === 'run' && x.phase === 'regles') {
+      Object.assign(s, { sport: 'walk', title: 'Marche tranquille', minutes: 25, details: '25 min de marche à ton rythme.', mini: MINI.walk, note: 'Règles : on remplace la course par une marche tranquille.' });
+    }
+    if (!s.mini) delete (s as Partial<Spec>).mini;
+    out.push(toSession(date, s));
   }
   return out;
 }
 
-// ---------- scheduling ----------
-
-const PREF = [1, 3, 5, 6, 2, 4, 0];
-const isHard = (s: Spec) => s.intensity !== 'facile';
-
-function schedule(mon: string, specs: Spec[], available: number[], basket: Set<number>, allowDouble: boolean): PlannedSession[] {
-  const avail = new Set(available);
-  const byDay = new Map<number, Spec[]>();
-  const afterBasket = (d: number) => basket.has((d + 6) % 7);
-  const circ = (a: number, b: number) => Math.min(Math.abs(a - b), 7 - Math.abs(a - b));
-
-  const main = specs.filter((s) => !s.optional);
-  const opt = specs.filter((s) => s.optional);
-  // Longest first (weekend), then hard, then the rest.
-  const order = [
-    ...main.filter((s) => s.long).sort((a, b) => b.minutes - a.minutes),
-    ...main.filter((s) => !s.long && isHard(s)),
-    ...main.filter((s) => !s.long && !isHard(s)),
-    ...opt,
-  ];
-
-  const score = (d: number) => {
-    const occupied = [...byDay.keys(), ...basket];
-    return occupied.length ? Math.min(...occupied.map((u) => circ(d, u))) : 7;
-  };
-  const neighbours = (d: number) => [...byDay.keys(), ...basket].filter((u) => circ(d, u) === 1).length;
-  // Days already carrying load (hard or long session, or basket): hard sessions keep away from them.
-  const heavyGap = (d: number) => {
-    const heavy = [...basket, ...[...byDay.entries()].filter(([, xs]) => xs.some((x) => isHard(x) || x.long)).map(([k]) => k)];
-    return heavy.length ? Math.min(...heavy.map((u) => circ(d, u))) : 7;
-  };
-  const pick = (cands: number[], hard = false) =>
-    [...cands].sort((a, b) =>
-      (hard ? heavyGap(b) - heavyGap(a) : 0) || score(b) - score(a) || neighbours(a) - neighbours(b) || PREF.indexOf(a) - PREF.indexOf(b),
-    )[0];
-
-  for (const orig of order) {
-    const s = { ...orig };
-    const free = [...avail].filter((d) => !byDay.has(d));
-    const okHard = (d: number) => !isHard(s) || !afterBasket(d);
-    let day: number | undefined;
-
-    if (s.long) {
-      const wk = [5, 6].filter((d) => free.includes(d) && okHard(d));
-      if (wk.length) day = wk[0];
-    }
-    if (day === undefined) {
-      const cands = free.filter(okHard);
-      if (cands.length) day = pick(cands, isHard(s));
-    }
-    if (day === undefined && free.length) {
-      day = pick(free);
-      if (isHard(s) && afterBasket(day)) s.intensity = 'facile';
-    }
-    if (day === undefined) {
-      // Double up (prépa only, required sessions, max 2 a day) on the lightest day without the same sport.
-      if (!allowDouble || s.optional) continue;
-      const cands = [...byDay.keys()].filter((d) => byDay.get(d)!.length < 2 && !byDay.get(d)!.some((x) => x.sport === s.sport) && (!isHard(s) || !afterBasket(d)));
-      if (!cands.length) continue;
-      day = cands.sort((a, b) => sum(byDay.get(a)!) - sum(byDay.get(b)!) || a - b)[0];
-    }
-    if (!byDay.has(day)) byDay.set(day, []);
-    byDay.get(day)!.push(s);
-  }
-
-  const out: PlannedSession[] = [];
-  for (const d of [...byDay.keys()].sort((a, b) => a - b)) {
-    for (const s of byDay.get(d)!) out.push(toSession(addDays(mon, d), s));
-  }
-  return out;
-}
-
-const sum = (xs: Spec[]) => xs.reduce((a, s) => a + s.minutes, 0);
-
-function toSession(date: string, s: Spec): PlannedSession {
-  const out: PlannedSession = {
-    id: `${date}-${s.sport}`,
-    date,
-    sport: s.sport,
-    title: s.title,
-    minutes: s.minutes,
-    intensity: s.intensity,
-    details: s.details,
-  };
-  if (s.mini) out.mini = s.mini;
-  if (s.optional) out.optional = true;
-  return out;
-}
-
-// ---------- cycle-aware sessions ----------
-
-const INTENSITY_RANK: Record<Intensity, number> = { facile: 0, 'modéré': 1, soutenu: 2 };
+// ---------- cycle-aware helpers used by the screens ----------
 
 /**
  * Lower a session's intensity to `cap` when it is above it.
@@ -506,55 +972,45 @@ export function adaptSession(
   cap: Intensity,
   reason = 'Cette phase',
 ): { session: PlannedSession; note?: string } {
-  if (INTENSITY_RANK[s.intensity] <= INTENSITY_RANK[cap]) return { session: s };
+  if (RANK[s.intensity] <= RANK[cap]) return { session: s, note: s.note };
   return {
     session: { ...s, intensity: cap },
-    note: `${reason} : garde-la tranquille, en endurance.`,
+    note: s.note ?? `${reason} : garde-la tranquille, en endurance.`,
   };
 }
 
 /**
- * Cycle position on `date`. For future dates past the expected period, the
- * cycle is projected forward (estimate). Null when tracking is off, in
+ * Cycle position on `date` as the plan sees it: logged cycles, then projected ones
+ * (estimate), also before the first logged period. Null when tracking is off, in
  * pregnancy mode, or when no period is logged.
  */
-export function cycleForecast(date: string, p: Profile, days: Record<string, DayLog>): CycleInfo | null {
-  const cs = cycleSettings(p);
-  if (!cs.tracking || cs.pregnant) return null;
-  let info = cycleOn(date, p, days);
-  if (!info || info.phase !== 'retard' || date <= today()) return info;
-  // Project: pretend the next periods started on time, a few cycles at most.
-  let projected = days;
-  for (let i = 0; i < 6 && info && info.phase === 'retard'; i++) {
-    const start = info.nextPeriod;
-    projected = { ...projected, [start]: { date: start, meals: [], workouts: [], cycle: { period: 'start' } } };
-    info = cycleOn(date, p, projected);
-  }
-  return info;
+export function cycleForecast(date: string, p: Profile, days: Days, asOf?: string): CycleInfo | null {
+  return build(p, days, asOf).fc?.pos(date)?.info ?? null;
 }
 
 /** Intensity ceiling for `date` from the cycle (or pregnancy), with the note prefix. */
-export function sessionCapOn(date: string, p: Profile, days: Record<string, DayLog>): { cap: Intensity; reason?: string } {
+export function sessionCapOn(date: string, p: Profile, days: Days, asOf?: string): { cap: Intensity; reason?: string } {
   const cs = cycleSettings(p);
   if (cs.pregnant) return { cap: 'modéré', reason: 'Mode grossesse' };
-  const info = cycleForecast(date, p, days);
-  if (!info) return { cap: 'soutenu' };
-  return { cap: adviceFor(info, p, date).intensityCap, reason: phaseLabel(info.phase) };
+  const d = planDay(date, p, days, asOf);
+  if (!d.phase) return { cap: 'soutenu' };
+  const cap: Intensity = d.phase === 'regles' || d.phase === 'premenstruel' ? 'facile' : d.phase === 'luteale' || d.phase === 'retard' ? 'modéré' : 'soutenu';
+  return { cap, reason: phaseLabel(d.phase) };
 }
 
-/** Planned sessions on `date`, adapted to the cycle cap. */
-export function adaptedSessionsOn(date: string, p: Profile, days: Record<string, DayLog>): { session: PlannedSession; note?: string }[] {
-  const { cap, reason } = sessionCapOn(date, p, days);
-  return sessionsOn(date, p).map((s) => adaptSession(s, cap, reason));
+/** Planned sessions on `date` (already cycle-aware), with their note. */
+export function adaptedSessionsOn(date: string, p: Profile, days: Days, asOf?: string): { session: PlannedSession; note?: string }[] {
+  const { cap, reason } = sessionCapOn(date, p, days, asOf);
+  return sessionsOn(date, p, days, asOf).map((s) => (s.sport === 'other' ? { session: s, note: s.note } : adaptSession(s, cap, reason)));
 }
 
 /** Days of the week starting `weekStart` in follicular/fertile phase: good days for key sessions (estimate). */
-export function goodDays(weekStart: string, p: Profile, days: Record<string, DayLog>): string[] {
+export function goodDays(weekStart: string, p: Profile, days: Days, asOf?: string): string[] {
   const out: string[] = [];
   for (let i = 0; i < 7; i++) {
     const d = addDays(weekStart, i);
-    const info = cycleForecast(d, p, days);
-    if (info && (info.phase === 'folliculaire' || info.phase === 'fertile')) out.push(d);
+    const ph = planDay(d, p, days, asOf).phase;
+    if (ph === 'folliculaire' || ph === 'fertile') out.push(d);
   }
   return out;
 }
@@ -563,14 +1019,14 @@ export function goodDays(weekStart: string, p: Profile, days: Record<string, Day
 
 function blocks(p: Profile, c: Calendar): SeasonBlock[] {
   const raw: SeasonBlock[] = [
-    { name: 'Reprise', start: p.startDate, end: addDays(c.fondStart, -1), goal: 'Retrouver le plaisir de bouger, 3 petites séances par semaine.' },
-    { name: 'Fondations', start: c.fondStart, end: addDays(c.consStart, -1), goal: 'Nager 800 à 1 000 m sans t’arrêter, courir 25 min en continu.' },
-    { name: 'Consolidation', start: c.consStart, end: addDays(c.vacStart, -1), goal: '4 séances par semaine, premiers enchaînements vélo-course.' },
-    { name: 'Maldives', start: c.vacStart, end: addDays(c.prepStart, -1), goal: 'Nager dans le lagon, marcher, profiter. Puis reprendre en douceur.' },
-    { name: 'Base', start: c.baseStart, end: addDays(c.buildStart, -1), goal: 'Du volume facile : vélo jusqu’à 2 h, course jusqu’à 1 h 10.' },
+    { name: 'Reprise', start: p.startDate, end: addDays(c.fondStart, -1), goal: 'Retrouver le plaisir : tes séances + basket, calées sur ton cycle, course en continu.' },
+    { name: 'Fondations', start: c.fondStart, end: addDays(c.consStart, -1), goal: 'Courir 40 min en continu, nager 800 m sans t’arrêter, sortie vélo d’1 h.' },
+    { name: 'Consolidation', start: c.consStart, end: addDays(c.vacStart, -1), goal: 'Sortie vélo vers 1 h 30, un peu de tempo en phase folliculaire.' },
+    { name: 'Maldives', start: c.vacStart, end: addDays(c.prepStart, -1), goal: 'Nager en mer (hors règles), marcher, profiter. Puis reprendre en douceur.' },
+    { name: 'Base', start: c.prepStart, end: addDays(c.buildStart, -1), goal: 'Du volume facile : vélo vers 2 h, course vers 1 h.' },
     { name: 'Construction', start: c.buildStart, end: addDays(c.specStart, -1), goal: 'Allure half sur les trois sports, sorties longues qui grandissent.' },
     { name: 'Spécifique', start: c.specStart, end: addDays(c.taperStart, -1), goal: 'Répéter la course : vélo 3 h, course 1 h 45, nage 2 500 m.' },
-    { name: 'Affûtage', start: c.taperStart, end: addDays(c.race, -1), goal: 'Moins de volume, un peu de rythme : arriver reposé·e.' },
+    { name: 'Affûtage', start: c.taperStart, end: addDays(c.race, -1), goal: 'Moins de volume, un peu de rythme : arriver reposée.' },
     { name: 'Course', start: c.race, end: c.race, goal: '1,9 km · 90 km · 21,1 km. Profite de chaque kilomètre.' },
   ];
   return raw

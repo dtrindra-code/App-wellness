@@ -13,6 +13,7 @@ import { store } from '../store';
 import { fmtDayMonth, today } from '../lib/dates';
 import { targets, phaseOn } from '../lib/nutrition';
 import { PREGNANCY_NOTE, adviceFor, cycleOn, cycleSettings } from '../lib/cycle';
+import { planSettings } from '../data/plan';
 import { QUOTES, QUOTES_FOR_SHORTCUT } from '../data/quotes';
 import { openProfileEditor, toggleRow } from './onboarding';
 import {
@@ -282,6 +283,21 @@ function cycleNum(value: number, min: number, max: number, onSave: (n: number) =
   return input;
 }
 
+/** "Pas de piscine : X j avant, pendant, Y j après" — the plan never puts a swim in that window. */
+function noSwimRow(): HTMLElement {
+  const ps = planSettings(store.profile);
+  const before = cycleNum(ps.noSwimBefore, 0, 7, (n) => void store.saveProfile({ noSwimBefore: n }));
+  const after = cycleNum(ps.noSwimAfter, 0, 7, (n) => void store.saveProfile({ noSwimAfter: n }));
+  for (const el of [before, after]) { el.classList.add('set-num-inline'); el.setAttribute('aria-label', el === before ? 'Jours avant les règles' : 'Jours après les règles'); }
+  return h('div', { class: 'field' },
+    h('span', { class: 'field-label' }, 'Natation et règles'),
+    h('div', { class: 'set-noswim' },
+      h('span', null, 'Pas de piscine :'), before, h('span', null, 'j avant, pendant,'), after, h('span', null, 'j après'),
+    ),
+    h('span', { class: 'field-hint' }, 'Le plan déplace la natation ou la remplace par du vélo tranquille ou des étirements.'),
+  );
+}
+
 function cycleCard(): HTMLElement | null {
   const p = store.profile;
   if (p.sex === 'm') return null;
@@ -296,6 +312,7 @@ function cycleCard(): HTMLElement | null {
           ),
           h('p', { class: 'small muted' }, 'Ta moyenne réelle remplace la durée dès que quelques règles sont notées. Les dates prévues restent des estimations.'),
           toggleRow('Essai bébé', cs.ttc, (v) => saveCycle({ ttc: v }), 'Déficit plus doux, fenêtre fertile mise en avant.'),
+          noSwimRow(),
         ]
       : null,
     toggleRow('Mode grossesse', cs.pregnant, (v) => saveCycle({ pregnant: v }), 'Plus de déficit : on mange à l’équilibre.'),
