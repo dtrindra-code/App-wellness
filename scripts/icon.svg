@@ -1,17 +1,31 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <!-- Cap Maldives: lagoon square, low sun on the horizon, one soft wave. -->
+  <!-- Pep's: pink ground, one cream bead with a black "P", a small gold star. -->
   <defs>
-    <linearGradient id="sea" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#1a948d"/>
-      <stop offset="1" stop-color="#0a6662"/>
-    </linearGradient>
-    <clipPath id="sky"><rect width="512" height="284"/></clipPath>
+    <radialGradient id="bead" cx="0.38" cy="0.32" r="0.75">
+      <stop offset="0" stop-color="#FFFDF2"/>
+      <stop offset="0.7" stop-color="#FFF6D3"/>
+      <stop offset="1" stop-color="#EFDDA6"/>
+    </radialGradient>
+    <radialGradient id="star" cx="0.4" cy="0.35" r="0.8">
+      <stop offset="0" stop-color="#FFE28A"/>
+      <stop offset="1" stop-color="#E0A92E"/>
+    </radialGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#8a3d5c" flood-opacity="0.28"/>
+    </filter>
+    <pattern id="dots" width="44" height="44" patternUnits="userSpaceOnUse">
+      <circle cx="22" cy="22" r="3.2" fill="#ffffff" opacity="0.35"/>
+    </pattern>
     <clipPath id="shape"><rect width="512" height="512" rx="{{RX}}"/></clipPath>
   </defs>
   <g clip-path="url(#shape)">
-    <rect width="512" height="512" fill="url(#sea)"/>
-    <circle cx="256" cy="284" r="74" fill="#ffffff" opacity="0.92" clip-path="url(#sky)"/>
-    <rect x="112" y="280" width="288" height="16" rx="8" fill="#ffffff"/>
-    <path d="M152 346 q26 -20 52 0 t52 0 t52 0 t52 0" fill="none" stroke="#ffffff" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" opacity="0.8"/>
+    <rect width="512" height="512" fill="#FFC8DD"/>
+    <rect width="512" height="512" fill="url(#dots)"/>
+    <circle cx="256" cy="262" r="150" fill="url(#bead)" filter="url(#shadow)"/>
+    <text x="256" y="262" text-anchor="middle" dominant-baseline="central"
+      font-family="'League Spartan', 'Arial Black', 'DejaVu Sans', Arial, sans-serif" font-weight="900"
+      font-size="200" fill="#111111">P</text>
+    <path transform="translate(372 118) rotate(12)" fill="url(#star)" stroke="#C98E1F" stroke-width="3"
+      d="M0 -46 L13 -14 L47 -12 L20 9 L29 43 L0 24 L-29 43 L-20 9 L-47 -12 L-13 -14 Z"/>
   </g>
 </svg>

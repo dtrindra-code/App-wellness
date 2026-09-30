@@ -1,4 +1,4 @@
-// Cap Maldives — widget « citation du jour » pour l'app Scriptable (iPhone).
+// Pep’s — widget « citation du jour » pour l'app Scriptable (iPhone).
 // Écran verrouillé (rectangulaire ou en ligne) et écran d'accueil (petit, moyen).
 // Même citation que l'app : même liste, même choix selon la date.
 // Aucune donnée personnelle : le widget lit seulement la liste publique des citations.
@@ -69,7 +69,7 @@ if (family === 'accessoryInline') {
   dot.font = Font.systemFont(9);
   dot.textColor = PINK;
   foot.addSpacer(5);
-  const a = foot.addText(q.author || 'Cap Maldives');
+  const a = foot.addText(q.author || 'Pep’s');
   a.font = new Font('Georgia-Italic', 11);
   a.textColor = INK;
   a.textOpacity = 0.7;
