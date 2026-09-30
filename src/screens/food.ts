@@ -533,6 +533,7 @@ function summaryCard(date: string): HTMLElement {
 
   const protRatio = t.protein ? eaten.protein / t.protein : 0;
   const side: HTMLElement[] = [
+    barRow('Calories', `${fmtInt(eaten.kcal)} / ${fmtInt(t.budget)}`, t.budget ? eaten.kcal / t.budget : 0, over ? 'warn' : 'accent'),
     barRow('Protéines', `${fmtG(eaten.protein)} / ${fmtInt(t.protein)} g`, protRatio, protRatio >= 1 ? 'good' : 'accent'),
   ];
   if (t.carbsMax !== undefined) {
@@ -545,13 +546,12 @@ function summaryCard(date: string): HTMLElement {
       h('div', { class: 'td-energy-side' }, side),
     ),
     over ? h('p', { class: 'small muted', style: 'text-align:center' }, 'Pas grave, on lisse sur la semaine.') : null,
+    h('p', { class: 'small muted num', style: 'text-align:center' },
+      `Mangé ${fmtInt(eaten.kcal)} kcal sur ${fmtInt(t.budget)}`,
+      t.sportBonus > 0 ? ` · dont +${fmtInt(t.sportBonus)} sport` : '',
+      cycleExtra > 0 ? ` · +${fmtInt(cycleExtra)} cycle` : ''),
     disclosure('Voir le détail', () => [
-      barRow('Calories', `${fmtInt(eaten.kcal)} / ${fmtInt(t.budget)}`, t.budget ? eaten.kcal / t.budget : 0, over ? 'warn' : 'accent'),
-      h('p', { class: 'small muted num' },
-        `Budget ${fmtInt(t.budget)} kcal`,
-        t.sportBonus > 0 ? `, dont +${fmtInt(t.sportBonus)} grâce au sport` : '',
-        cycleExtra > 0 ? ` · +${fmtInt(cycleExtra)} kcal (cycle)` : '',
-        ` · lipides ${fmtG(eaten.fat)} g.`),
+      h('p', { class: 'small muted num' }, `Lipides ${fmtG(eaten.fat)} g · glucides ${fmtG(eaten.carbs)} g.`),
       weekLine(date),
       infoRow({ icon: ICON.plane, title: phase.label, detail: phase.hint }),
       advice ? infoRow({ icon: ICON.cycle, title: advice.label, detail: advice.food }) : null,
