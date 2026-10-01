@@ -3,7 +3,7 @@
 // RESPIRER · TES CHIFFRES (Garmin form folded, insights) · STRESS ET CORTISOL.
 
 import type { Screen, ScreenCtx } from './types';
-import type { Profile, Wellbeing } from '../types';
+import type { GarminField, Profile, Wellbeing } from '../types';
 import { store } from '../store';
 import {
   h, gearIcon, screenTitle, heartSticker, field, parseNum, toast, fmtInt,
@@ -297,7 +297,7 @@ function breathingCard(date: string): HTMLElement {
 
 // ---------- 4. Garmin ----------
 
-interface GField { key: keyof Wellbeing; label: string; unit: string; min: number; max: number; decimal: boolean; ph: string }
+interface GField { key: GarminField; label: string; unit: string; min: number; max: number; decimal: boolean; ph: string }
 const GFIELDS: GField[] = [
   { key: 'sleepH', label: 'Sommeil', unit: 'h', min: 0, max: 16, decimal: true, ph: 'ex. 7,5' },
   { key: 'bodyBattery', label: 'Body Battery', unit: '', min: 0, max: 100, decimal: false, ph: 'ex. 65' },
@@ -329,13 +329,21 @@ function garminCard(date: string): HTMLElement {
 
   function save() {
     const next: Wellbeing = { ...wb };
+    const manual = new Set<GarminField>(wb.manual ?? []);
     for (const f of GFIELDS) {
       const raw = inputs.get(f.key)!.value.replace(/\s/g, '');
-      if (!raw) { delete next[f.key]; continue; }
+      if (!raw) {
+        if (next[f.key] !== undefined) manual.add(f.key);
+        delete next[f.key];
+        continue;
+      }
       const v = parseNum(raw);
       if (v === undefined || v < f.min || v > f.max) { err.textContent = `${f.label} : entre ${f.min} et ${fmtInt(f.max)}.`; return; }
-      (next[f.key] as number) = f.decimal ? Math.round(v * 10) / 10 : Math.round(v);
+      next[f.key] = f.decimal ? Math.round(v * 10) / 10 : Math.round(v);
+      // Changed by hand: the Garmin import won't overwrite it anymore.
+      if (next[f.key] !== wb[f.key]) manual.add(f.key);
     }
+    if (manual.size) next.manual = [...manual];
     err.textContent = '';
     (document.activeElement as HTMLElement | null)?.blur();
     void store.updateDay(date, (d) => {
@@ -350,6 +358,7 @@ function garminCard(date: string): HTMLElement {
   }
 
   const shown = GFIELDS.filter((f) => wb[f.key] !== undefined).slice(0, 3);
+  const fromGarmin = wb.source === 'garmin' && GFIELDS.some((f) => wb.garmin?.[f.key] !== undefined && wb[f.key] === wb.garmin[f.key]);
   return h('section', { class: 'card ux solo' },
     infoRow({
       icon: ICON.battery,
@@ -358,6 +367,7 @@ function garminCard(date: string): HTMLElement {
         ? shown.map((f) => `${f.label} ${fmtVal(f, wb[f.key] as number)}${f.unit ? ' ' + f.unit : ''}`).join(' · ')
         : 'Sommeil, Body Battery, stress… de la nuit et d’hier',
     }),
+    fromGarmin ? h('p', { class: 'small muted', style: 'margin:0' }, 'Arrivés tout seuls depuis Garmin. Tu peux corriger : ta valeur sera gardée.') : null,
     disclosure(shown.length ? 'Modifier mes chiffres' : 'Saisir mes chiffres', () => [
       grid,
       err,

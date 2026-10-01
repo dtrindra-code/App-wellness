@@ -59,6 +59,8 @@ function workoutSub(w: Workout): string {
   if (w.distanceKm) parts.push(`${fmtKm(w.distanceKm)} km`);
   if (w.steps) parts.push(`${w.steps.toLocaleString('fr-FR')} pas`);
   if (w.rpe) parts.push(`effort ${w.rpe}/10`);
+  if (w.avgHr) parts.push(`FC ${w.avgHr}`);
+  if (w.garminId) parts.push('Garmin');
   return parts.join(' · ');
 }
 
