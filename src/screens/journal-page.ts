@@ -1,30 +1,35 @@
-// "Ma page du jour": the evening page of the journal, on lined paper. 2–3 short
-// questions, each with its own textarea (auto-grow, saved while typing and on blur),
-// optional quick chips on the first, "Passer". Shown inline on Today (CE SOIR) and as
-// a full sheet. Days 30 and 60 show their checkpoint instead (journal-checkpoints).
-// Saving happens per question; the app defers its re-render while a field is focused,
-// so typing is never interrupted.
+// "Ma page du jour": the evening page of the journal, in the shared template
+// (journal-shell): ink cover (Jour n/60, chapter, the 4-chapter path), then the cream
+// page: theme, the big italic question, quick chips, the writing area on notebook
+// lines (always visible), the follow-up questions, an optional emotion, the tip as a
+// whisper, "Garder ma page" / "Passer". Opened from the ink card on Today.
+// Saving happens per question while typing (debounced) and on blur, so closing the
+// page never loses a word.
 
 import { store } from '../store';
-import { h, openSheet, toast } from '../lib/ui';
+import { h, toast } from '../lib/ui';
+import { fmtLong } from '../lib/dates';
 import {
-  promptOn, answerText, saveQuestion, toggleAnswerChip, skipPage, unskipPage, isAnswered,
+  JOURNEY_DAYS, promptOn, answerText, saveQuestion, toggleAnswerChip, skipPage, unskipPage, isAnswered, dayInChapter, chapterInfo, chapterOf,
 } from '../lib/journey';
-import { openModuleOpening } from './journal-science';
+import { CHAPTERS } from '../data/journey';
+import { openModuleOpening, openChapterOpening } from './journal-science';
+import { emotionPicker } from './journal-emotions';
+import { openJournalPage, chapterPath, whisper } from './journal-shell';
+import type { JournalPage } from './journal-shell';
 
-const kids = (...xs: (Node | null | undefined | false)[]): Node[] => xs.filter((x): x is Node => !!x);
 type Prompt = NonNullable<ReturnType<typeof promptOn>>;
 
 const SAVE_MS = 600;
 
-/** Grow a textarea with its content. */
+/** Grow a textarea with its content (never below its CSS min-height). */
 export function autoGrow(ta: HTMLTextAreaElement) {
   const fit = () => { ta.style.height = 'auto'; ta.style.height = `${Math.max(ta.scrollHeight, 0)}px`; };
   ta.addEventListener('input', fit);
   requestAnimationFrame(fit);
 }
 
-/** A textarea that saves itself (debounced while typing, at once on blur). */
+/** A textarea on notebook lines that saves itself (debounced while typing, at once on blur). */
 export function savingTextarea(o: { value: string; label: string; placeholder?: string; rows?: number; cls?: string; save: (v: string) => void }): HTMLTextAreaElement {
   let timer: number | undefined;
   let last = o.value;
@@ -33,7 +38,7 @@ export function savingTextarea(o: { value: string; label: string; placeholder?: 
     if (ta.value !== last) { last = ta.value; o.save(ta.value); }
   };
   const ta = h('textarea', {
-    class: 'jp-ta ' + (o.cls ?? ''), rows: o.rows ?? 2, placeholder: o.placeholder ?? 'Quelques mots suffisent…',
+    class: 'jn-lines ' + (o.cls ?? ''), rows: o.rows ?? 4, placeholder: o.placeholder ?? 'Quelques mots, si tu veux…',
     'aria-label': o.label, value: o.value,
     oninput: () => { if (timer !== undefined) clearTimeout(timer); timer = window.setTimeout(flush, SAVE_MS); },
     onblur: flush,
@@ -42,102 +47,134 @@ export function savingTextarea(o: { value: string; label: string; placeholder?: 
   return ta;
 }
 
-function moduleLine(pr: Prompt, compact: boolean): HTMLElement | null {
+/** Wrapping chips (44 px), toggled in place. */
+export function jnChips(list: string[], isOn: (c: string) => boolean, onToggle: (c: string, on: boolean) => void, label = 'Réponses rapides (facultatif)'): HTMLElement {
+  return h('div', { class: 'jn-chips', role: 'group', 'aria-label': label },
+    list.map((c) => {
+      const btn = h('button', {
+        class: 'jn-chip' + (isOn(c) ? ' on' : ''), type: 'button', 'aria-pressed': isOn(c) ? 'true' : 'false',
+        onclick: () => {
+          const on = !btn.classList.contains('on');
+          btn.classList.toggle('on', on);
+          btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+          onToggle(c, on);
+        },
+      }, c);
+      return btn;
+    }));
+}
+
+function moduleLine(pr: Prompt): HTMLElement | null {
   const m = pr.module;
   if (!m) return null;
-  return h('div', { class: 'jp-module' },
-    h('span', { class: 'eyebrow' }, `Module · ${m.title} · étape ${m.step}/${m.of}`),
-    m.stepTitle !== pr.title ? h('span', { class: 'jp-module-step' }, m.stepTitle) : null,
-    m.step === 1 || !compact
-      ? h('button', { class: 'dc-link', type: 'button', style: 'align-self:flex-start', onclick: () => openModuleOpening(m.key) },
-          m.step === 1 ? 'Commencer par « Comprendre l’anxiété » ›' : 'Relire « Comprendre l’anxiété » ›')
-      : null,
+  return h('div', { class: 'jn-module' },
+    h('span', { class: 'jn-module-l' }, `Module · ${m.title} · étape ${m.step}/${m.of}`),
+    m.stepTitle !== pr.title ? h('span', { class: 'jn-module-step' }, m.stepTitle) : null,
+    h('button', { class: 'jn-link', type: 'button', onclick: () => openModuleOpening(m.key) },
+      m.step === 1 ? 'Commencer par « Comprendre l’anxiété » ›' : 'Relire « Comprendre l’anxiété » ›'),
   );
 }
 
-/** The questions of the day on lined paper. */
+/** Day 1 of a chapter: its quote, intro and the "Comprendre" page. */
+function chapterIntro(pr: Prompt): HTMLElement | null {
+  if (dayInChapter(pr.day) !== 1) return null;
+  const ch = chapterInfo(chapterOf(pr.day));
+  return h('section', { class: 'jn-intro', 'aria-label': `Chapitre ${ch.index}` },
+    h('span', { class: 'jn-meta-l' }, `Nouveau chapitre · ${ch.subtitle}`),
+    h('blockquote', { class: 'jn-quote-line' }, `« ${ch.quote.text} »`, ch.quote.author ? h('span', { class: 'jn-quote-by' }, ch.quote.author) : null),
+    h('p', { class: 'jn-text' }, ch.intro),
+    h('button', { class: 'jn-link', type: 'button', onclick: () => openChapterOpening(ch.index) }, `Lire « ${ch.understand.title} » ›`),
+  );
+}
+
+/** The questions of the day: the first one big, with chips; the next ones smaller. */
 export function pageEditor(date: string, pr: Prompt): HTMLElement {
   const a = store.getDay(date).journey?.answer;
   const chips = new Set(a && !a.skipped ? a.chips ?? [] : []);
   const qs = pr.questions?.length ? pr.questions : [{ q: pr.question, chips: pr.chips }];
-  return h('div', { class: 'jp-paper lined' },
-    qs.map((q, i) => {
-      const chipRow = i === 0 && q.chips?.length
-        ? h('div', { class: 'jr-chips jp-chips', role: 'group', 'aria-label': 'Réponses rapides (facultatif)' },
-            q.chips.map((c) => {
-              const btn = h('button', {
-                class: 'jr-chip' + (chips.has(c) ? ' on' : ''), type: 'button', 'aria-pressed': chips.has(c) ? 'true' : 'false',
-                onclick: () => {
-                  const on = !chips.has(c);
-                  if (on) chips.add(c); else chips.delete(c);
-                  btn.classList.toggle('on', on);
-                  btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-                  toggleAnswerChip(date, c);
-                },
-              }, c);
-              return btn;
-            }))
-        : null;
-      return h('div', { class: 'jp-q-block' },
-        h('p', { class: 'jp-q', id: `jp-q-${date}-${i}` }, h('span', { class: 'jp-n num' }, `${i + 1}.`), ' ', q.q),
-        chipRow,
-        savingTextarea({ value: answerText(a, i), label: q.q, save: (v) => saveQuestion(date, i, v) }),
-      );
-    }),
+  const many = qs.length > 1;
+  return h('div', { class: 'jn-qs' },
+    qs.map((q, i) => h('div', { class: 'jn-q-block' + (i ? ' next' : '') },
+      h('p', { class: i === 0 ? 'jn-q' : 'jn-q2', id: `jn-q-${date}-${i}` },
+        many ? h('span', { class: 'jn-n', 'aria-hidden': 'true' }, `${i + 1}.`) : null, many ? ' ' : null, q.q),
+      i === 0 && q.chips?.length ? jnChips(q.chips, (c) => chips.has(c), (c) => toggleAnswerChip(date, c)) : null,
+      savingTextarea({ value: answerText(a, i), label: q.q, rows: i === 0 ? 4 : 3, cls: i ? 'short' : '', save: (v) => saveQuestion(date, i, v) }),
+    )),
   );
 }
 
-function pageHead(pr: Prompt): HTMLElement[] {
-  return [
-    h('div', { class: 'jp-head' },
-      h('span', { class: 'eyebrow' }, `Ma page du jour · Jour ${pr.day}`),
-      pr.themeLabel ? h('span', { class: 'jp-theme' }, pr.themeLabel) : null),
-    h('h3', { class: 'jr-title jp-title' }, pr.title),
-  ];
+/** Optional emotion, at the end of the page (repaints itself on pick). */
+function emotionBlock(date: string): HTMLElement {
+  const wrap = h('div', { class: 'jn-emo' });
+  const paint = () => wrap.replaceChildren(
+    h('p', { class: 'jn-q2' }, 'Et ton émotion du jour ? ', h('span', { class: 'jn-opt' }, 'facultatif')),
+    emotionPicker(date, () => setTimeout(paint, 0)),
+  );
+  paint();
+  return wrap;
 }
 
-/** CE SOIR: the page, editable in place. */
-export function journeyPageCard(date: string, rerender: () => void): HTMLElement | null {
-  const pr = promptOn(date);
-  if (!pr) return null;
+function pageBody(date: string, pr: Prompt): Node[] {
   const day = store.getDay(date);
-  const a = day.journey?.answer;
-  const card = h('section', { class: 'card ux solo jr-card jp-card', 'aria-label': 'Ma page du jour' }, ...pageHead(pr), moduleLine(pr, true));
-  if (a?.skipped) {
-    card.append(
-      h('p', { class: 'small muted' }, 'Passée aujourd’hui. C’est ok, la page t’attendra.'),
-      h('button', { class: 'dc-link', style: 'align-self:flex-start', type: 'button', onclick: () => { unskipPage(date); rerender(); } }, 'Y répondre quand même'),
-    );
-    return card;
+  const head = [chapterIntro(pr), h('h2', { class: 'jn-theme' }, pr.title), moduleLine(pr)];
+  if (day.journey?.answer?.skipped) {
+    return [
+      ...head,
+      h('p', { class: 'jn-text' }, 'Passée aujourd’hui. C’est ok, la page t’attendra.'),
+    ].filter((x): x is HTMLElement => !!x);
   }
-  const written = isAnswered(day);
-  card.append(...kids(
+  return [
+    ...head,
     pageEditor(date, pr),
-    pr.tip ? h('p', { class: 'small muted jr-tip' }, pr.tip) : null,
-    h('div', { class: 'row between jp-foot' },
-      written
-        ? h('span', { class: 'small muted' }, '✓ Gardé sur ton téléphone')
-        : h('button', { class: 'btn ghost sm', type: 'button', onclick: () => { skipPage(date); toast('Passée. À demain, en douceur.'); } }, 'Passer'),
-      h('button', { class: 'dc-link', type: 'button', onclick: () => openPageSheet(date) }, 'Ouvrir en grand ›')),
-  ));
-  return card;
+    emotionBlock(date),
+    pr.tip ? whisper(pr.tip) : null,
+  ].filter((x): x is HTMLElement => !!x);
 }
 
-/** Full-screen page. */
+/** The full page of `date`. */
 export function openPageSheet(date: string) {
   const pr = promptOn(date);
   if (!pr) return;
-  const body = h('div', { class: 'stack jp-sheet' },
-    ...pageHead(pr),
-    moduleLine(pr, false),
-    pageEditor(date, pr),
-    pr.tip ? h('p', { class: 'small muted jr-tip' }, pr.tip) : null,
-    h('p', { class: 'small muted' }, 'Deux ou trois lignes suffisent. Tout est gardé au fur et à mesure.'),
-    h('button', { class: 'btn primary block', type: 'button', onclick: () => {
-      (document.activeElement as HTMLElement | null)?.blur();
-      sheet.close();
-      if (isAnswered(store.getDay(date))) toast('C’est écrit. Merci pour toi.');
-    } }, 'C’est écrit'),
-  );
-  const sheet = openSheet('Ma page du jour', body);
+  const ch = chapterInfo(chapterOf(pr.day));
+  const meta: [string, string] = [fmtLong(date), '2 min'];
+  const blur = () => (document.activeElement as HTMLElement | null)?.blur();
+
+  const actions = (): Pick<Parameters<typeof openJournalPage>[0], 'primary' | 'secondary'> => {
+    if (store.getDay(date).journey?.answer?.skipped) {
+      return {
+        primary: { label: 'Y répondre quand même', run: () => { unskipPage(date); repaint(); } },
+        secondary: { label: 'Fermer', run: () => page.close() },
+      };
+    }
+    return {
+      primary: {
+        label: 'Garder ma page',
+        run: () => {
+          blur();
+          if (!isAnswered(store.getDay(date))) {
+            page.close();
+            toast('Ta page t’attend, quand tu veux.');
+            return;
+          }
+          toast('Gardée. Merci pour toi.');
+          void page.celebrate().then(() => page.close());
+        },
+      },
+      secondary: isAnswered(store.getDay(date))
+        ? null
+        : { label: 'Passer', run: () => { blur(); skipPage(date); page.close(); toast('Passée. À demain, en douceur.'); } },
+    };
+  };
+  const repaint = () => { page.update({ body: pageBody(date, pr), ...actions() }); page.toTop(); };
+
+  const page: JournalPage = openJournalPage({
+    eyebrow: `Revenir à moi · Jour ${pr.day} / ${JOURNEY_DAYS}`,
+    title: 'Ma page du jour',
+    sub: `Chapitre ${ch.index} — ${ch.title}`,
+    path: chapterPath(ch.index, CHAPTERS.map((c) => c.title)),
+    meta,
+    body: [],
+    onClose: blur,
+  });
+  page.update({ body: pageBody(date, pr), ...actions() });
 }

@@ -6,7 +6,8 @@ import type { AppState } from '../types';
 import type { PeriodStats, Period, NutritionDay } from '../lib/stats';
 import { diff, weeklySessions } from '../lib/stats';
 import { h, fmtInt, fmtDelta, infoRow, disclosure, keyBubble, ICON, SPORT_LABEL, SPORT_GLYPH } from '../lib/ui';
-import { addDays, dayShort, fmtDayMonth, fmtShort, parseISO } from '../lib/dates';
+import { addDays, dayShort, fmtDayMonth, fmtShort, mondayOf, parseISO, range } from '../lib/dates';
+import { weekOf } from '../data/plan';
 import { cycleOn, cycleSettings, phaseLabel } from '../lib/cycle';
 import { barChart } from './progress-charts';
 import { TRIGGER_WORD } from './progress-coach';
@@ -42,8 +43,18 @@ function head(bubble: HTMLElement, title: string, line?: string | null, chip?: H
     ));
 }
 
-function emptyCard(icon: string, title: string, detail: string): HTMLElement {
-  return h('section', { class: 'card ux solo pg-card' }, infoRow({ icon, title, detail, cls: 'pg-empty' }));
+function emptyCard(icon: string, title: string, detail: string, action?: HTMLElement | null): HTMLElement {
+  return h('section', { class: 'card ux solo pg-card' }, infoRow({ icon, title, detail, cls: 'pg-empty' }), action ?? null);
+}
+
+/** The plan's sessions of the week of `date`, done / planned: the same counter as the Sport tab. */
+function weekPlan(state: AppState, date: string): { planned: number; done: number } {
+  const mon = mondayOf(date);
+  const week = weekOf(mon, state.profile, state.days);
+  const required = (week?.sessions ?? []).filter((x) => !x.optional);
+  const ids = new Set<string>();
+  for (const d of range(mon, addDays(mon, 6))) for (const w of state.days[d]?.workouts ?? []) if (w.plannedId) ids.add(w.plannedId);
+  return { planned: required.length, done: required.filter((x) => ids.has(x.id)).length };
 }
 
 function dayTicks(perDay: { date: string }[], period: Period): string[] {
@@ -59,7 +70,7 @@ const lastDays = <T,>(xs: T[]) => xs.slice(-31);
 
 // ---------- TON ASSIETTE ----------
 
-export function plateCard(ps: PeriodStats): HTMLElement {
+export function plateCard(ps: PeriodStats, onAdd?: () => void): HTMLElement {
   const { cur, prev, spans } = ps;
   const n = cur.nutrition;
   const period = spans.period;
@@ -67,7 +78,8 @@ export function plateCard(ps: PeriodStats): HTMLElement {
     return emptyCard(ICON.fork, 'Pas encore de repas notés',
       n.slips
         ? `${pl(n.slips, 'moment difficile noté', 'moments difficiles notés')}, sans jugement. Note tes repas : tes moyennes apparaîtront ici.`
-        : 'Note tes repas : ici apparaîtront tes calories moyennes, tes protéines et tes jours dans le budget.');
+        : 'Note tes repas : ici apparaîtront tes calories moyennes, tes protéines et tes jours dans le budget.',
+      onAdd ? h('button', { class: 'btn sm', type: 'button', style: 'align-self:flex-start', onclick: onAdd }, 'Noter un repas') : null);
   }
   const inBudget = n.avgKcal !== null && n.avgBudget !== null && n.avgKcal <= n.avgBudget;
   const card = h('section', { class: 'card ux solo pg-card' },
@@ -141,12 +153,21 @@ export function sportCard(ps: PeriodStats, state: AppState): HTMLElement {
   }
   const topSports = sp.perSport.slice(0, 3).map((x) => `${SPORT_LABEL[x.sport] ?? x.sport} ${fmtInt(x.minutes)} min`).join(' · ');
   const run = sp.run;
+  // The week: the very same counter as the Sport tab (the whole week's plan, not up to today).
+  const wk = period === 'semaine' ? weekPlan(state, spans.cur.to) : null;
+  const planned = wk ? wk.planned : sp.planned;
+  const done = wk ? wk.done : sp.plannedDone;
+  const when = period === 'semaine' ? ' cette semaine' : '';
   return h('section', { class: 'card ux solo pg-card' },
     head(
-      keyBubble(String(sp.sessions), sp.sessions > 1 ? 'séances' : 'séance', sp.minis ? `dont ${sp.minis} ${sp.minis > 1 ? 'minis' : 'mini'}` : undefined),
-      sp.planned ? `${sp.plannedDone} sur ${sp.planned} prévues` : `${pl(sp.activeDays, 'jour actif', 'jours actifs')}`,
-      `${fmtInt(sp.minutes)} min au total`,
-      sp.planned && sp.plannedDone >= sp.planned ? h('span', { class: 'chip good' }, 'plan tenu') : null,
+      planned
+        ? keyBubble(`${done}/${planned}`, undefined, 'séances du plan')
+        : keyBubble(String(sp.sessions), sp.sessions > 1 ? 'séances' : 'séance', sp.minis ? `dont ${sp.minis} ${sp.minis > 1 ? 'minis' : 'mini'}` : undefined),
+      planned
+        ? `${pl(done, 'séance faite', 'séances faites')} sur ${pl(planned, 'prévue', 'prévues')}${when}`
+        : `${pl(sp.activeDays, 'jour actif', 'jours actifs')}`,
+      `${pl(sp.sessions, 'activité', 'activités')}${sp.minis ? ` dont ${sp.minis} ${sp.minis > 1 ? 'minis' : 'mini'}` : ''} · ${fmtInt(sp.minutes)} min au total`,
+      planned && done >= planned ? h('span', { class: 'chip good' }, 'plan tenu') : null,
     ),
     prev && prev.sport.sessions ? chips([
       cmpChip(diff(sp.sessions, prev.sport.sessions), (a) => pl(a, 'séance', 'séances'), 'up', period, 0.5),

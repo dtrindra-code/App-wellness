@@ -1,24 +1,23 @@
-// Reading pages of the journal: the chapter / module openings (quote on crumpled
-// paper, "Comprendre…" page, clipped card "À relire quand ça monte"), the list of
-// every reread card (Équilibre, the slip sheet), and "Ce que disent les études".
+// Reading pages of the journal: the chapter / module openings (quote with a pink rule,
+// "Comprendre…" page, the ink card "À relire quand ça monte"), the list of every
+// reread card (Équilibre, the slip sheet), and "Ce que disent les études".
 
-import { h, openSheet, clipSticker } from '../lib/ui';
+import { h, openSheet } from '../lib/ui';
 import { CHAPTERS, MODULES, SCIENCE } from '../data/journey';
 import type { JourneyChapter, JourneyModule, JourneyQuote, RereadCard, UnderstandPage } from '../data/journey';
 
-/** Quote page: crumpled paper, Playfair italic. */
+/** Quote page: Playfair italic 22 with a pink rule (no paper). */
 export function quotePage(q: JourneyQuote, eyebrow?: string): HTMLElement {
-  return h('figure', { class: 'jn-quote paper' },
+  return h('figure', { class: 'jn-quote' },
     eyebrow ? h('span', { class: 'eyebrow' }, eyebrow) : null,
     h('blockquote', { class: 'jn-quote-text' }, `« ${q.text} »`),
     q.author ? h('figcaption', { class: 'jn-quote-author' }, q.author) : null,
   );
 }
 
-/** Clipped card "À relire quand ça monte". */
+/** Ink card "À relire quand ça monte". */
 export function rereadCard(r: RereadCard, from?: string): HTMLElement {
   return h('section', { class: 'jn-reread', 'aria-label': r.title },
-    clipSticker('jn-clip'),
     h('h3', { class: 'jn-reread-title' }, r.title),
     from ? h('p', { class: 'jn-reread-from' }, from) : null,
     h('ul', { class: 'jn-reread-lines' }, r.lines.map((l) => h('li', null, l))),
@@ -26,7 +25,7 @@ export function rereadCard(r: RereadCard, from?: string): HTMLElement {
 }
 
 export function understandPage(u: UnderstandPage): HTMLElement {
-  return h('section', { class: 'jn-understand lined' },
+  return h('section', { class: 'jn-understand' },
     h('h3', { class: 'jn-understand-title' }, u.title),
     u.paragraphs.map((p) => h('p', null, p)),
   );
@@ -88,7 +87,7 @@ export function openScienceSheet() {
     h('ul', { class: 'jn-benefits' }, sc.benefits.map((b) => h('li', null,
       h('span', { class: 'jr-check', 'aria-hidden': 'true' }, '✓'),
       h('span', null, h('strong', null, b.title), ' : ', b.text)))),
-    h('div', { class: 'jn-summary paper' },
+    h('div', { class: 'jn-summary' },
       h('span', { class: 'eyebrow' }, 'En résumé'),
       h('p', null, sc.summary)),
     h('p', { class: 'small muted' }, 'Sources citées pour aller plus loin. Les effets observés sont réels mais modestes : écrire aide, sans remplacer un accompagnement quand tu en as besoin.'),

@@ -1,64 +1,151 @@
-// "Revenir à moi" on Aujourd'hui: the invite (until she starts), the morning card
-// (Jour N/60 · chapter intro on day 1 · 30 s check-in: energy + needs), the
-// engagements as one-tap chips (+ joker), the journal prompt of the evening and the
-// chapter recap on day 15. Also the sheets shared with Équilibre: start flow, rules
-// editor, chapter recap / journal history.
-// Pure render functions: they read the store, never subscribe to it. Drafts live in
-// module variables so a re-render never loses what she is typing.
+// "Revenir à moi" outside its pages: the ink entry card on Today (every state of the
+// journey in one 88 px card), the engagements as hairline check rows, the optional
+// needs inside the coach card, and the sheets shared with Équilibre: start flow, rules
+// editor, chapter pages, "Mes pages" (journal page template).
+// Pure render functions: they read the store, never subscribe to it.
 
 import { store } from '../store';
-import { h, openSheet, toast, iconCircle, ICON, bar, disclosure } from '../lib/ui';
+import { h, openSheet, toast, bar, disclosure, checkRow, haptic } from '../lib/ui';
 import { addDays, fmtDayMonth, fmtShort, today } from '../lib/dates';
 import {
   JOURNEY_DAYS, CHAPTER_DAYS, JOKERS_PER_WEEK, MAX_NEEDS,
-  journeyOf, journeyStatus, journeyDay, chapterOf, dayInChapter, chapterInfo, rulesOn, ruleDef, ruleDone, autoDone,
-  dayScore, jokersLeft, setJoker, toggleRule, energyOf, setEnergy, toggleNeed,
-  startJourney, changeRules, stopJourney, chapterRecap, besoinDe, journeyStats, emotionLabel, checkpointOnDay,
+  journeyOf, journeyDay, chapterOf, chapterInfo, rulesOn, ruleDef, ruleDone, autoDone,
+  dayScore, jokersLeft, setJoker, toggleRule, energyOf, toggleNeed, promptOn, entryState,
+  startJourney, changeRules, stopJourney, chapterRecap, besoinDe, journeyStats,
 } from '../lib/journey';
 import type { ChapterRecap } from '../lib/journey';
-import { DEFAULT_RULES, NEEDS, RULES } from '../data/journey';
+import { CHAPTERS, DEFAULT_RULES, NEEDS, RULES } from '../data/journey';
 import type { NeedKey } from '../data/journey';
-import { markDone, popCls } from './today-shared';
-import { emotionPicker } from './journal-emotions';
-import { journeyPageCard } from './journal-page';
-import { checkpointCard, baselineInvite, openCheckpoint } from './journal-checkpoints';
-import { openChapterOpening, quotePage } from './journal-science';
+import { openPageSheet } from './journal-page';
+import { openCheckpoint, openJourneyRecap } from './journal-checkpoints';
+import { openSundayReset } from './sunday-reset';
+import { openJournalPage, chapterPath } from './journal-shell';
 
 // ---------- transient UI state ----------
 const INVITE_KEY = 'cap-maldives:journey-invite';
-/** Dates whose check-in is open (being answered or changed): it folds on « C’est noté ». */
-const checkinEdit = new Set<string>();
+/** Dates whose needs chips stay open in the coach card while she picks (up to 3). */
+const needsOpen = new Set<string>();
 
 export const ENERGY_LABELS = ['À plat', 'Basse', 'Moyenne', 'Bonne', 'Pleine'] as const;
-
-const check = () => h('span', { class: 'jr-check', 'aria-hidden': 'true' }, '✓');
-
-// ---------- invite (not started) ----------
 
 function inviteHiddenUntil(): string | null {
   try { return localStorage.getItem(INVITE_KEY); } catch { return null; }
 }
 
-/** Today card while the journey is not started (hidden 7 days after "Plus tard"). */
-export function journeyInviteCard(date: string): HTMLElement | null {
-  if (journeyStatus(date, store.profile) !== 'none') return null;
-  const until = inviteHiddenUntil();
-  if (until && date < until) return null;
-  return h('section', { class: 'card ux solo jr-invite paper', 'aria-label': 'Revenir à moi' },
-    h('span', { class: 'eyebrow' }, 'Nouveau · 60 jours'),
-    h('h3', { class: 'jr-title' }, 'Revenir à moi'),
-    h('p', { class: 'italic jr-sub' }, '5 minutes par jour, rien que pour toi.'),
-    h('div', { class: 'row', style: 'gap:8px' },
-      h('button', { class: 'btn primary grow', type: 'button', onclick: () => openJourneyStart() }, 'Découvrir'),
-      h('button', {
-        class: 'btn ghost', type: 'button',
-        onclick: (e: Event) => {
-          try { localStorage.setItem(INVITE_KEY, addDays(date, 7)); } catch { /* ignore */ }
-          (e.currentTarget as HTMLElement).closest('.jr-invite')?.remove();
-        },
-      }, 'Plus tard'),
-    ),
+const chevron = () => h('span', { class: 'jr-entry-chev', 'aria-hidden': 'true' }, '›');
+
+// ---------- the ink entry card (Today) ----------
+
+/**
+ * Today: the "Revenir à moi" card, dark ink, one tap. Covers every state: invite,
+ * upcoming, page of the day (before / after 18 h, kept, skipped), checkpoints 30 / 60,
+ * the Sunday reset, the end. Day-0 baseline, reset and chapter end add a small link
+ * under the card. Null when there is nothing to show.
+ */
+export function journeyEntryCard(date: string, hour: number = new Date().getHours() + new Date().getMinutes() / 60): HTMLElement | null {
+  const es = entryState(date, hour);
+  if (!es) return null;
+  if (es.kind === 'invite') {
+    const until = inviteHiddenUntil();
+    if (until && date < until) return null;
+  }
+  const n = es.day;
+  const pr = n !== null ? promptOn(date) : null;
+  const ch = n !== null ? chapterInfo(chapterOf(n)) : null;
+
+  let disc: [string, string] = [String(n ?? 0), `/${JOURNEY_DAYS}`];
+  let line = '';
+  let open: () => void = () => openPageSheet(date);
+  let label = 'Revenir à moi';
+  switch (es.kind) {
+    case 'invite':
+      disc = ['60', 'jours'];
+      line = '60 jours pour cultiver ton jardin intérieur';
+      open = () => openJourneyStart();
+      break;
+    case 'upcoming': {
+      const j = journeyOf(store.profile)!;
+      disc = ['J−' + String(es.daysToStart ?? 0), ''];
+      line = es.daysToStart === 1 ? 'Ça commence demain' : `Ça commence le ${fmtDayMonth(j.startDate)}`;
+      open = () => (es.baselineDue ? openCheckpoint('0') : openRulesSheet());
+      break;
+    }
+    case 'page-soon':
+      line = `Ce soir : ${pr?.title ?? 'ta page'} · 2 min`;
+      break;
+    case 'page':
+      line = 'Ta page du jour · 2 min';
+      break;
+    case 'written':
+      line = 'Page gardée ✓ · Relire';
+      break;
+    case 'skipped':
+      line = 'Passée · Y répondre quand même';
+      break;
+    case 'checkpoint':
+      line = n === 30 ? 'Jour 30 · Premier regard en arrière' : 'Jour 60 · Ce qui a fleuri';
+      open = () => openCheckpoint(String(n) as '30' | '60');
+      break;
+    case 'checkpoint-done':
+      line = 'Bilan gardé ✓ · Relire';
+      open = () => (n === 60 ? openJourneyRecap() : openCheckpoint('30'));
+      break;
+    case 'reset': {
+      const monday = new Date(`${date}T12:00:00`).getDay() === 1;
+      line = monday ? 'Ton reset de la semaine · 5 min' : 'Ton reset du dimanche · 5 min';
+      open = () => openSundayReset(date);
+      if (n === null) disc = ['60', `/${JOURNEY_DAYS}`];
+      break;
+    }
+    case 'done':
+      disc = ['60', `/${JOURNEY_DAYS}`];
+      line = 'Tu l’as fait, pour toi · Mon chemin';
+      open = () => openJourneyRecap();
+      label = 'Revenir à moi · parcours terminé';
+      break;
+  }
+
+  const card = h('button', {
+    class: 'jr-entry', type: 'button', 'data-kind': es.kind,
+    'aria-label': `${label}${n !== null ? `, jour ${n} sur ${JOURNEY_DAYS}` : ''}. ${line}`,
+    onclick: open,
+  },
+    h('span', { class: 'jr-entry-disc', 'aria-hidden': 'true' },
+      h('span', { class: 'jr-entry-n num' }, disc[0]),
+      disc[1] ? h('span', { class: 'jr-entry-of' }, disc[1]) : null),
+    h('span', { class: 'jr-entry-main' },
+      h('span', { class: 'jr-entry-title' }, label === 'Revenir à moi · parcours terminé' ? 'Revenir à moi' : label),
+      h('span', { class: 'jr-entry-line' }, line)),
+    chevron(),
   );
+
+  // Second links under the card (never inside: the card is one button).
+  const more: HTMLElement[] = [];
+  if (es.baselineDue && es.kind !== 'upcoming') {
+    more.push(h('button', { class: 'jr-entry-chip', type: 'button', onclick: () => openCheckpoint('0') }, 'Point de départ · 3 min'));
+  }
+  if (es.kind === 'reset' && n !== null) {
+    const written = es.day !== null && !!store.getDay(date).journey?.answer;
+    more.push(h('button', { class: 'jr-entry-link', type: 'button', onclick: () => openPageSheet(date) }, written ? 'Relire ma page du jour' : 'Ma page du jour'));
+  }
+  if (es.chapterEnd && n !== null && n !== 60 && hour >= 18 && ch) {
+    more.push(h('button', { class: 'jr-entry-link', type: 'button', onclick: () => openChapterSheet(ch.index) }, `Fin du chapitre ${ch.index} · Relire mes pages`));
+  }
+  if (es.kind === 'invite') {
+    more.push(h('button', {
+      class: 'jr-entry-link', type: 'button',
+      onclick: (e: Event) => {
+        try { localStorage.setItem(INVITE_KEY, addDays(date, 7)); } catch { /* ignore */ }
+        (e.currentTarget as HTMLElement).closest('.jr-entry-wrap')?.remove();
+      },
+    }, 'Plus tard'));
+  }
+  return h('div', { class: 'jr-entry-wrap' }, card, more.length ? h('div', { class: 'jr-entry-more' }, more) : null);
+}
+
+/** @deprecated Replaced by journeyEntryCard on Today. */
+export function journeyInviteCard(_date: string): HTMLElement | null {
+  return null;
 }
 
 // ---------- start flow ----------
@@ -99,12 +186,12 @@ export function openJourneyStart() {
   const tomorrow = addDays(today(), 1);
   const dateInput = h('input', { class: 'input', type: 'date', value: tomorrow, min: addDays(today(), -7), 'aria-label': 'Date du jour 1' });
   const body = h('div', { class: 'stack jr-start' },
-    h('p', { class: 'italic jr-sub' }, '60 jours pour te retrouver, 5 minutes par jour maximum.'),
+    h('p', { class: 'italic jr-sub' }, 'Chaque jour une graine, chaque semaine une pousse : 60 jours pour cultiver ton jardin intérieur, 5 minutes par jour maximum.'),
     h('ul', { class: 'jr-lines' },
-      h('li', null, 'Chaque matin : ton énergie et ton besoin du jour, en 30 secondes.'),
-      h('li', null, 'Dans la journée : 5 petits engagements doux. 4 sur 5, c’est une journée réussie.'),
+      h('li', null, 'Chaque matin : ton humeur d’un geste, et ton besoin du jour si tu veux.'),
+      h('li', null, 'Dans la journée : 5 petits engagements doux. 4 sur 5, et la journée fleurit.'),
       h('li', null, 'Le soir : ta page du jour, 2 ou 3 questions courtes. Quelques mots suffisent, ou tu passes.'),
-      h('li', null, 'Avant de commencer : ton point de départ (ta roue de vie, ton intention). On le revoit au jour 30 et au jour 60.'),
+      h('li', null, 'Avant de commencer : ton point de départ (ta roue de vie, ce que tu espères, ce que tu veux cultiver). On le revoit au jour 30 et au jour 60.'),
     ),
     h('p', { class: 'small muted' }, `4 chapitres de ${CHAPTER_DAYS} jours. ${JOKERS_PER_WEEK} jokers par semaine, et un jour raté ne remet jamais rien à zéro.`),
     h('h3', null, 'Tes 5 engagements'),
@@ -155,96 +242,38 @@ export function openRulesSheet() {
   const sheet = openSheet('Mes engagements', body);
 }
 
-// ---------- morning: Jour N/60 + check-in ----------
+// ---------- morning: needs inside the coach card ----------
 
-function dayEyebrow(n: number): string {
-  return `Revenir à moi · Jour ${n}/${JOURNEY_DAYS} · Chapitre ${chapterOf(n)}`;
+/** @deprecated The check-in is the coach card's mood faces; needs come with journeyNeedsInline. */
+export function journeyMorningCard(_date: string, _rerender: () => void): HTMLElement | null {
+  return null;
 }
 
-/** CE MATIN: compact journey card. Upcoming: one line; active: chapter intro (day 1) + check-in. */
-export function journeyMorningCard(date: string, rerender: () => void): HTMLElement | null {
-  const p = store.profile;
-  const st = journeyStatus(date, p);
-  const j = journeyOf(p);
-  if (st === 'upcoming' && j) {
-    return h('section', { class: 'card ux solo jr-card' },
-      h('span', { class: 'eyebrow' }, 'Revenir à moi'),
-      h('p', { class: 'small' }, j.startDate === addDays(date, 1) ? 'Ça commence demain. Rien à préparer : je te guide.' : `Ça commence le ${fmtDayMonth(j.startDate)}.`),
-      baselineInvite(),
-    );
-  }
-  const n = journeyDay(date, p);
-  if (n === null) return null;
-  const day = store.getDay(date);
-  const ch = chapterInfo(chapterOf(n));
-  const dic = dayInChapter(n);
-  const energy = energyOf(day);
-  const fromMood = day.journey?.energy === undefined && energy !== undefined;
-  const needs = day.journey?.needs ?? [];
-  const answered = energy !== undefined && needs.length > 0 && !checkinEdit.has(date);
-
-  const card = h('section', { class: 'card ux jr-card', 'aria-label': 'Revenir à moi' },
-    h('span', { class: 'eyebrow' }, dayEyebrow(n)),
-  );
-  if (dic === 1) {
-    card.append(h('div', { class: 'jr-intro' },
-      h('span', { class: 'eyebrow' }, `Chapitre ${ch.index}`),
-      h('h3', { class: 'jr-title' }, ch.title),
-      ch.subtitle ? h('p', { class: 'italic jr-sub' }, ch.subtitle) : null,
-      quotePage(ch.quote),
-      h('p', { class: 'small' }, ch.intro),
-      h('button', { class: 'dc-link', style: 'align-self:flex-start', type: 'button', onclick: () => openChapterOpening(ch.index) }, `Lire « ${ch.understand.title} » ›`),
-    ));
-  } else {
-    card.append(h('div', { class: 'jr-chap-line' },
-      h('span', { class: 'jr-chap-name' }, ch.title),
-      h('span', { class: 'small muted num' }, `jour ${dic}/${CHAPTER_DAYS}`)));
-  }
-  const invite = baselineInvite();
-  if (invite) card.append(invite);
-
-  if (answered) {
-    card.append(h('div', { class: 'jr-ci-done' },
-      iconCircle(ICON.heart),
-      h('span', { class: 'jr-ci-text' },
-        h('span', { class: 'info-title' }, `Énergie ${ENERGY_LABELS[(energy as number) - 1].toLowerCase()}`),
-        h('span', { class: 'info-detail' }, [...needs.map((k) => besoinDe(k)), emotionLabel(day.journey?.emotion)?.toLocaleLowerCase('fr-FR')].filter(Boolean).join(' · '))),
-      h('button', { class: 'dc-link', type: 'button', onclick: () => { checkinEdit.add(date); rerender(); } }, 'Changer'),
-    ));
-    return card;
-  }
-
-  card.append(h('div', { class: 'stack jr-ci', style: 'gap:10px' },
-    h('p', { class: 'dc-q' }, 'Ton énergie ce matin ?'),
-    h('div', { class: 'jr-energy', role: 'group', 'aria-label': 'Ton énergie, de 1 à 5' },
-      ENERGY_LABELS.map((label, i) => {
-        const on = energy === i + 1;
-        return h('button', {
-          class: 'jr-en' + (on ? ' on' : '') + popCls(`jr-en-${i + 1}`), type: 'button', 'aria-pressed': on ? 'true' : 'false', 'aria-label': `${i + 1} : ${label}`,
-          onclick: () => { markDone(`jr-en-${i + 1}`); checkinEdit.add(date); setEnergy(date, i + 1); },
-        }, h('span', { class: 'jr-en-dot num' }, String(i + 1)), h('span', { class: 'jr-en-label' }, label));
-      })),
-    fromMood ? h('p', { class: 'small muted' }, 'Repris de ton humeur du matin. Change si besoin.') : null,
-    h('p', { class: 'dc-q' }, 'De quoi as-tu besoin aujourd’hui ?'),
-    h('div', { class: 'jr-chips', role: 'group', 'aria-label': `Ton besoin du jour, ${MAX_NEEDS} au plus` },
+/**
+ * Inside the coach card, once the mood is picked: "De quoi as-tu besoin ? · facultatif",
+ * up to 3 chips. Null when the journey is off, or when needs are already set (and not
+ * being picked right now).
+ */
+export function journeyNeedsInline(date: string, rerender: () => void): HTMLElement | null {
+  if (journeyDay(date) === null) return null;
+  const needs = store.getDay(date).journey?.needs ?? [];
+  if (needs.length && !needsOpen.has(date)) return null;
+  return h('div', { class: 'jr-needs' },
+    h('p', { class: 'jr-needs-q' }, 'De quoi as-tu besoin ? ', h('span', { class: 'jr-needs-opt' }, '· facultatif')),
+    h('div', { class: 'jr-needs-chips', role: 'group', 'aria-label': `Ton besoin du jour, ${MAX_NEEDS} au plus` },
       NEEDS.map((x) => {
         const on = needs.includes(x.key);
         return h('button', {
-          class: 'jr-chip' + (on ? ' on' : '') + popCls(`jr-need-${x.key}`), type: 'button', 'aria-pressed': on ? 'true' : 'false',
-          onclick: () => {
-            markDone(`jr-need-${x.key}`);
-            checkinEdit.add(date);
-            if (!toggleNeed(date, x.key as NeedKey)) toast(`${MAX_NEEDS} besoins au plus : garde l’essentiel`);
+          class: 'jr-need' + (on ? ' on' : ''), type: 'button', 'aria-pressed': on ? 'true' : 'false',
+          onclick: (e: Event) => {
+            needsOpen.add(date);
+            haptic(e.currentTarget as Element);
+            if (!toggleNeed(date, x.key as NeedKey)) { toast(`${MAX_NEEDS} besoins au plus : garde l’essentiel`); return; }
+            rerender();
           },
-        }, on ? check() : null, x.label);
+        }, x.label);
       })),
-    h('p', { class: 'dc-q' }, 'Et ton émotion ? ', h('span', { class: 'small muted' }, 'facultatif')),
-    emotionPicker(date, () => { checkinEdit.add(date); }),
-    checkinEdit.has(date) && energy !== undefined && needs.length
-      ? h('button', { class: 'dc-link', style: 'align-self:flex-end', type: 'button', onclick: () => { checkinEdit.delete(date); rerender(); } }, 'C’est noté')
-      : null,
-  ));
-  return card;
+  );
 }
 
 /** Folded CE MATIN summary bit: "énergie bonne · besoin de calme". */
@@ -261,8 +290,8 @@ export function journeyMorningSummary(date: string): string | null {
 
 // ---------- engagements ----------
 
-/** TA JOURNÉE / CE SOIR: the day's engagements as one-tap chips, auto ones already ticked, joker. */
-export function journeyRulesCard(date: string): HTMLElement | null {
+/** TA JOURNÉE / CE SOIR: the engagements as hairline check rows (no card), counter, joker. */
+export function journeyRulesRows(date: string): HTMLElement | null {
   const n = journeyDay(date);
   if (n === null) return null;
   const day = store.getDay(date);
@@ -270,51 +299,50 @@ export function journeyRulesCard(date: string): HTMLElement | null {
   const sc = dayScore(date);
   const left = jokersLeft(date);
   const status = sc.joker
-    ? 'Joker utilisé : journée réussie quand même.'
+    ? 'Joker posé : la journée fleurit quand même.'
     : sc.success
-      ? sc.done === sc.total ? 'Tout est coché. Journée réussie.' : 'Journée réussie.'
-      : `Encore ${sc.need - sc.done} pour une journée réussie.`;
-
-  return h('section', { class: 'card ux jr-card jr-rules' + (sc.success ? ' ok' : ''), 'aria-label': 'Tes engagements du jour' },
-    h('div', { class: 'jr-rules-head' },
-      h('span', { class: 'eyebrow' }, 'Tes engagements'),
-      h('span', { class: 'num jr-score' }, `${sc.done}/${sc.total}`),
-    ),
+      ? sc.done === sc.total ? 'Tout est coché. Ta journée fleurit.' : 'Ta journée fleurit.'
+      : `Encore ${sc.need - sc.done} pour que ta journée fleurisse.`;
+  const joker = sc.joker
+    ? h('button', { class: 'jr-joker', type: 'button', onclick: () => setJoker(date, false) }, 'Rendre le joker')
+    : !sc.success && left > 0
+      ? h('button', { class: 'jr-joker', type: 'button', onclick: () => { if (setJoker(date, true)) toast('Joker posé. Prends soin de toi.'); } },
+          `Utiliser un joker (${left} restant${left > 1 ? 's' : ''})`)
+      : null;
+  return h('section', { class: 'jr-rows' + (sc.success ? ' ok' : ''), 'aria-label': 'Tes engagements du jour' },
+    h('div', { class: 'jr-rows-head' },
+      h('span', { class: 'jr-rows-t' }, 'Tes engagements'),
+      h('span', { class: 'jr-rows-n num' }, `${sc.done}/${sc.total}`)),
     bar(sc.total ? sc.done / sc.total : 0, sc.success ? 'good' : 'accent'),
-    h('div', { class: 'jr-chips', role: 'group', 'aria-label': 'Engagements du jour' },
+    h('div', { class: 'row-list' },
       rules.map((k) => {
         const r = ruleDef(k);
         const on = ruleDone(k, day);
         const auto = autoDone(k, day) && (r?.auto === 'move' || r?.auto === 'water');
-        return h('button', {
-          class: 'jr-chip jr-rule' + (on ? ' on' : '') + (auto ? ' auto' : '') + popCls(`jr-rule-${k}`), type: 'button',
-          'aria-pressed': on ? 'true' : 'false', title: r?.detail ?? r?.label ?? k,
-          onclick: () => {
-            markDone(`jr-rule-${k}`);
-            if (!toggleRule(date, k)) toast('Compté tout seul d’après ta journée');
-          },
-        }, on ? check() : null, r?.label ?? k, auto ? h('span', { class: 'jr-auto-tag' }, 'auto') : null);
+        return checkRow({
+          title: r?.label ?? k,
+          // Titles only on Today (the full wording lives in Équilibre › Mes engagements).
+          detail: auto ? h('span', { class: 'jr-auto-d' }, 'auto, d’après ta journée') : undefined,
+          on,
+          label: r?.label ?? k,
+          cls: 'jr-rule' + (auto ? ' auto' : ''),
+          onToggle: () => { if (!toggleRule(date, k)) toast('Compté tout seul d’après ta journée'); },
+        });
       })),
-    h('p', { class: 'small jr-status' }, status),
-    sc.joker
-      ? h('button', { class: 'dc-link', style: 'align-self:center', type: 'button', onclick: () => setJoker(date, false) }, 'Rendre le joker')
-      : !sc.success
-        ? left > 0
-          ? h('button', { class: 'dc-link', style: 'align-self:center', type: 'button', onclick: () => { if (setJoker(date, true)) toast('Joker posé. Prends soin de toi.'); } },
-              `Utiliser un joker (${left} restant${left > 1 ? 's' : ''} cette semaine)`)
-          : h('p', { class: 'small muted', style: 'text-align:center' }, 'Plus de joker cette semaine : ce n’est pas grave, rien ne se remet à zéro.')
-        : null,
+    h('div', { class: 'jr-rows-foot' }, h('span', { class: 'jr-status' }, status), joker),
   );
+}
+
+/** @deprecated Card version of the engagements: Today now uses journeyRulesRows. */
+export function journeyRulesCard(date: string): HTMLElement | null {
+  return journeyRulesRows(date);
 }
 
 // ---------- journal page ----------
 
-/** CE SOIR: the page of the day (journal-page), or the checkpoint on day 30 / 60. */
-export function journeyPromptCard(date: string, rerender: () => void): HTMLElement | null {
-  const n = journeyDay(date);
-  if (n === null) return null;
-  if (checkpointOnDay(n)) return checkpointCard(date);
-  return journeyPageCard(date, rerender);
+/** @deprecated The page opens from journeyEntryCard. */
+export function journeyPromptCard(_date: string, _rerender: () => void): HTMLElement | null {
+  return null;
 }
 
 // ---------- chapter recap ----------
@@ -334,77 +362,83 @@ export function energyBars(values: (number | null)[], labels?: string[]): HTMLEl
 }
 
 export function recapBody(r: ChapterRecap): HTMLElement {
-  return h('div', { class: 'stack', style: 'gap:10px' },
-    h('p', { class: 'small' }, `${r.success} jour${r.success > 1 ? 's' : ''} réussi${r.success > 1 ? 's' : ''} · ${r.entries.length} page${r.entries.length > 1 ? 's' : ''} écrite${r.entries.length > 1 ? 's' : ''}`),
+  return h('div', { class: 'jr-recap' },
+    h('p', { class: 'jn-text' }, `${r.success} jour${r.success > 1 ? 's' : ''} en fleur · ${r.entries.length} page${r.entries.length > 1 ? 's' : ''} gardée${r.entries.length > 1 ? 's' : ''}`),
     r.energy.some((v) => v !== null) ? energyBars(r.energy) : null,
-    r.trend ? h('p', { class: 'small' }, TREND[r.trend]) : null,
+    r.trend ? h('p', { class: 'jn-text' }, TREND[r.trend]) : null,
     r.topNeeds.length
-      ? h('div', { class: 'stack', style: 'gap:6px' },
-          h('span', { class: 'eyebrow' }, 'Tes besoins les plus notés'),
-          h('div', { class: 'jr-chips' }, r.topNeeds.map((x) => h('span', { class: 'jr-chip static' }, `${x.label} · ${x.count}`))))
+      ? h('p', { class: 'jn-text' }, h('span', { class: 'jn-meta-l' }, 'Tes besoins les plus notés'), h('br', null),
+          r.topNeeds.map((x) => `${x.label} · ${x.count}`).join('   '))
       : null,
   );
 }
 
+/** One kept page: the question once, then the chips, then what she wrote. */
 export function entryView(e: { day: number; date: string; title: string; question: string; chips: string[]; text?: string; qa?: { q: string; a: string }[] }): HTMLElement {
   const qa = e.qa ?? (e.text ? [{ q: e.question, a: e.text }] : []);
-  return h('article', { class: 'jr-entry lined' },
-    h('div', { class: 'jr-entry-head' },
-      h('span', { class: 'eyebrow' }, `Jour ${e.day} · ${fmtShort(e.date)}`),
-      h('span', { class: 'jr-entry-title' }, e.title)),
-    e.chips.length ? h('p', { class: 'small' }, h('span', { class: 'jr-entry-q' }, e.question), h('br', null), e.chips.join(' · ')) : null,
-    qa.map((x) => [h('p', { class: 'jr-entry-q' }, x.q), h('p', { class: 'jr-answer' }, x.a)]),
+  const firstIsMain = qa.length > 0 && qa[0].q === e.question;
+  const rest = firstIsMain ? qa.slice(1) : qa;
+  return h('article', { class: 'jr-pg' },
+    h('span', { class: 'jn-meta-l' }, `Jour ${e.day} · ${fmtShort(e.date)}`),
+    h('h3', { class: 'jr-pg-title' }, e.title),
+    e.chips.length || firstIsMain ? h('p', { class: 'jr-pg-q' }, e.question) : null,
+    e.chips.length ? h('p', { class: 'jr-pg-chips' }, e.chips.join(' · ')) : null,
+    firstIsMain ? h('p', { class: 'jr-pg-a' }, qa[0].a) : null,
+    rest.map((x) => [h('p', { class: 'jr-pg-q next' }, x.q), h('p', { class: 'jr-pg-a' }, x.a)]),
   );
 }
 
-/** CE SOIR on chapter day 15 (and the day after the last day): what this chapter said. */
-export function journeyRecapCard(date: string): HTMLElement | null {
-  const n = journeyDay(date);
-  if (n === null || dayInChapter(n) !== CHAPTER_DAYS) return null;
-  const idx = chapterOf(n);
-  const r = chapterRecap(idx, date);
-  if (!r) return null;
+/** @deprecated The chapter end is a link under journeyEntryCard. */
+export function journeyRecapCard(_date: string): HTMLElement | null {
+  return null;
+}
+
+const CHAPTER_TITLES = CHAPTERS.map((c) => c.title);
+
+function chapterPages(idx: number, open = true): HTMLElement {
   const ch = chapterInfo(idx);
-  return h('section', { class: 'card ux solo jr-card jr-recap paper', 'aria-label': `Fin du chapitre ${idx}` },
-    h('span', { class: 'eyebrow' }, `Fin du chapitre ${idx}`),
-    h('h3', { class: 'jr-title' }, ch.title),
-    recapBody(r),
-    ch.recapPrompt ? h('p', { class: 'italic jr-sub' }, ch.recapPrompt) : null,
-    h('button', { class: 'btn block', type: 'button', onclick: () => openChapterSheet(idx) }, 'Relire mes pages'),
+  const r = chapterRecap(idx);
+  const pages = () => (r && r.entries.length
+    ? h('div', { class: 'jr-pages' }, r.entries.map(entryView))
+    : h('p', { class: 'jn-text' }, idx === 1 ? 'Ta première page t’attend ce soir.' : 'Pas encore de page gardée ici.'));
+  return h('section', { class: 'jr-chap-block' },
+    h('h2', { class: 'jn-theme' }, `Chapitre ${idx} · ${ch.title}`),
+    ch.subtitle ? h('p', { class: 'jn-q2' }, ch.subtitle) : null,
+    r ? recapBody(r) : null,
+    open ? pages() : disclosure(`Lire mes pages (${r?.entries.length ?? 0})`, pages, `jr-ch-${idx}`, 'Replier mes pages'),
   );
 }
 
 /** Pages of one chapter, with its recap. */
 export function openChapterSheet(idx: number) {
-  const r = chapterRecap(idx);
   const ch = chapterInfo(idx);
-  const body = h('div', { class: 'stack' },
-    ch.subtitle ? h('p', { class: 'italic jr-sub' }, ch.subtitle) : null,
-    r ? recapBody(r) : null,
-    r && r.entries.length
-      ? h('div', { class: 'stack', style: 'gap:10px' }, r.entries.map(entryView))
-      : h('p', { class: 'small muted' }, 'Pas encore de page écrite dans ce chapitre.'),
-  );
-  openSheet(`Chapitre ${idx} · ${ch.title}`, body);
+  const page = openJournalPage({
+    eyebrow: `Revenir à moi · Fin du chapitre ${idx}`,
+    title: 'Mes pages',
+    sub: `Chapitre ${idx} — ${ch.title}`,
+    path: chapterPath(idx, CHAPTER_TITLES),
+    body: [chapterPages(idx), ch.recapPrompt ? h('p', { class: 'jn-whisper' }, ch.recapPrompt) : null],
+    primary: { label: 'Fermer', run: () => page.close() },
+  });
 }
 
-/** All chapters (Équilibre → "Mes pages"). */
+/** All chapters (Équilibre → "Mes pages"), newest first. */
 export function openJournalSheet() {
   const st = journeyStats();
   const last = st ? (st.day >= 1 ? st.chapter : 1) : 1;
-  const body = h('div', { class: 'stack' },
-    h('p', { class: 'small muted' }, 'Tes réponses restent sur ton téléphone (et dans ta sauvegarde chiffrée si elle est active).'),
-    ...Array.from({ length: last }, (_, i) => last - i).map((idx) => {
-      const ch = chapterInfo(idx);
-      const r = chapterRecap(idx);
-      return h('div', { class: 'jr-chap-block' },
-        h('h3', null, `Chapitre ${idx} · ${ch.title}`),
-        r ? recapBody(r) : null,
-        disclosure(`Lire mes pages (${r?.entries.length ?? 0})`, () => (r && r.entries.length
-          ? h('div', { class: 'stack', style: 'gap:10px' }, r.entries.map(entryView))
-          : h('p', { class: 'small muted' }, 'Pas encore de page écrite ici.')), `jr-ch-${idx}`, 'Replier'),
-      );
-    }),
-  );
-  openSheet('Mes pages', body);
+  const answered = st?.answered ?? 0;
+  const d = today();
+  const canWrite = journeyDay(d) !== null && !store.getDay(d).journey?.answer;
+  const page = openJournalPage({
+    eyebrow: 'Revenir à moi',
+    title: 'Mes pages',
+    sub: answered ? `${answered} page${answered > 1 ? 's' : ''} gardée${answered > 1 ? 's' : ''}` : 'Ton carnet t’attend',
+    path: chapterPath(last, CHAPTER_TITLES),
+    meta: ['Par chapitre', 'Sur ton téléphone'],
+    body: [
+      ...Array.from({ length: last }, (_, i) => last - i).map((idx, k) => chapterPages(idx, k === 0)),
+      h('p', { class: 'jn-whisper' }, 'Tes réponses restent sur ton téléphone (et dans ta sauvegarde chiffrée si elle est active).'),
+    ],
+    primary: canWrite ? { label: 'Écrire ma page du jour', run: () => { page.close(); setTimeout(() => openPageSheet(d), 240); } } : { label: 'Fermer', run: () => page.close() },
+  });
 }

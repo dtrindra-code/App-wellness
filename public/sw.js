@@ -3,7 +3,7 @@
 // pre-computes the day's coach messages into IndexedDB (src/lib/notify.ts); the push itself
 // only carries the slot name ({"slot":"matin"}), so nothing personal crosses the network.
 // Bump VERSION to drop old caches after a change to this file.
-const VERSION = 'v2-peps';
+const VERSION = 'v3-evoluer';
 const SHELL = `cap-shell-${VERSION}`;
 const FONTS = `cap-fonts-${VERSION}`;
 const START = new URL('./', self.location).href;

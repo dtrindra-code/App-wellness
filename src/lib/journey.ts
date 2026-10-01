@@ -13,7 +13,7 @@ import type { AppState, CheckpointKey, DayLog, JourneyCheckpoint, JourneyDay, Jo
 import { store } from '../store';
 import { addDays, daysBetween, mondayOf, today, weekday } from './dates';
 import { cycleOn, cycleSettings } from './cycle';
-import { CHAPTERS, DEFAULT_RULES, EMOTIONS, LIFE_DOMAINS, NEEDS, PROMPTS, RULES, checkpointFor, promptFor } from '../data/journey';
+import { CHAPTERS, DEFAULT_RULES, EMOTIONS, LIFE_DOMAINS, MODULES, NEEDS, PROMPTS, RULES, checkpointFor, promptFor } from '../data/journey';
 import type { EmotionKey, NeedKey, PromptPhase } from '../data/journey';
 
 export const JOURNEY_DAYS = 60;
@@ -642,4 +642,100 @@ export function finishReset(sunday: string) {
     if (!Object.keys(r).length) r.done = {};
     d.journeyReset = r;
   });
+}
+
+// ---------- garden map ("Ton parcours en un coup d'œil") ----------
+
+export type MapStatus = 'bloom' | 'seed' | 'today' | 'future' | 'missed';
+
+export interface MapDay {
+  /** 0 (point de départ) … 60. */
+  day: number;
+  date: string;
+  /** bloom: day réussie · seed: something done, not réussie · missed: past, nothing noted · today · future. */
+  status: MapStatus;
+  /** Every 7th day: a sprout (one week grown). */
+  sprout: boolean;
+  chapter: 1 | 2 | 3 | 4;
+  checkpoint?: 0 | 30 | 60;
+  module?: string;
+}
+
+/** The 61 stops of the garden path (day 0 + days 1 … 60) as seen on `date`. */
+export function journeyMap(date: string = today(), state: AppState = store.state): MapDay[] {
+  const j = journeyOf(state.profile);
+  const out: MapDay[] = [];
+  const start = j?.startDate ?? addDays(date, 1);
+  const started = !!j && date >= start;
+  out.push({
+    day: 0, date: addDays(start, -1),
+    status: j && checkpointDone('0', state.profile) ? 'bloom' : started ? 'missed' : 'future',
+    sprout: false, chapter: 1, checkpoint: 0,
+  });
+  for (let n = 1; n <= JOURNEY_DAYS; n++) {
+    const d = addDays(start, n - 1);
+    const day = state.days[d];
+    let status: MapStatus = 'future';
+    if (j && d === date) status = 'today';
+    else if (j && d < date) {
+      const sc = dayScore(d, state);
+      const cp = n === 30 || n === 60 ? checkpointDone(String(n) as CheckpointKey, state.profile) : false;
+      if (sc.success || cp) status = 'bloom';
+      else if (sc.done > 0 || isAnswered(day) || energyOf(day) !== undefined) status = 'seed';
+      else status = 'missed';
+    }
+    const mod = MODULES.find((m) => m.days.includes(n));
+    out.push({
+      day: n, date: d, status, sprout: n % 7 === 0,
+      chapter: chapterOf(n) as 1 | 2 | 3 | 4,
+      ...(n === 30 || n === 60 ? { checkpoint: n as 30 | 60 } : {}),
+      ...(mod ? { module: mod.key } : {}),
+    });
+  }
+  return out;
+}
+
+// ---------- entry card state (Today) ----------
+
+export type EntryKind =
+  | 'invite' | 'upcoming' | 'page-soon' | 'page' | 'written' | 'skipped'
+  | 'checkpoint' | 'checkpoint-done' | 'reset' | 'done';
+
+export interface EntryState {
+  kind: EntryKind;
+  /** Journey day (1 … 60), null outside. */
+  day: number | null;
+  /** Day-0 baseline still to fill (shown as a chip, first 15 days). */
+  baselineDue: boolean;
+  /** The Sunday reset is due (Sunday evening / Monday morning). */
+  resetDue: boolean;
+  /** Last day of a chapter (15, 30, 45, 60). */
+  chapterEnd: boolean;
+  /** Days left before the start (upcoming). */
+  daysToStart?: number;
+}
+
+/** What the "Revenir à moi" card on Today shows at `hour` (0–24). Null: nothing to show. */
+export function entryState(date: string, hour: number, state: AppState = store.state): EntryState | null {
+  const p = state.profile;
+  const st = journeyStatus(date, p);
+  const j = journeyOf(p);
+  if (st === 'none' || !j) return { kind: 'invite', day: null, baselineDue: false, resetDue: false, chapterEnd: false };
+  const baselineDue = !checkpointDone('0', p);
+  const base = { baselineDue, resetDue: false, chapterEnd: false };
+  if (st === 'upcoming') return { ...base, kind: 'upcoming', day: null, daysToStart: daysBetween(date, j.startDate) };
+  const due = resetDue(date, hour, state);
+  if (st === 'done') {
+    // A week to look back, then the card leaves Today.
+    if (daysBetween(addDays(j.startDate, JOURNEY_DAYS - 1), date) > 7) return null;
+    return { ...base, baselineDue: false, kind: due ? 'reset' : 'done', day: null, resetDue: due };
+  }
+  const n = journeyDay(date, p)!;
+  const out: EntryState = { ...base, baselineDue: baselineDue && n <= 15, kind: 'page', day: n, resetDue: due, chapterEnd: dayInChapter(n) === CHAPTER_DAYS };
+  if (due) return { ...out, kind: 'reset' };
+  if (n === 30 || n === 60) return { ...out, kind: checkpointDone(String(n) as CheckpointKey, p) ? 'checkpoint-done' : 'checkpoint' };
+  const day = state.days[date];
+  if (day?.journey?.answer?.skipped) return { ...out, kind: 'skipped' };
+  if (isAnswered(day)) return { ...out, kind: 'written' };
+  return { ...out, kind: hour < 18 ? 'page-soon' : 'page' };
 }

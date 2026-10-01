@@ -19,6 +19,7 @@ import type { PhaseAdvice } from '../lib/cycle';
 import { getFood } from '../lib/foods';
 import { openFoodSearch, openMealQuantity } from './food-search';
 import { openSlipSheet } from './slip';
+import { cycleFoodCard, guideSafe } from './today-guide';
 
 // ---------- transient UI state ----------
 let selectedDate = today();
@@ -471,18 +472,17 @@ export const renderFood: Screen = (root) => {
   if (selectedDate > now) selectedDate = now;
   const date = selectedDate;
 
+  const cyc = date === now ? cycleFoodCard(date, guideSafe(date, { ideas: 3 })) : null;
   root.append(
-    h('header', { class: 'screen-head' },
-      screenTitle('Repas'),
-      h('button', { class: 'btn primary', type: 'button', onclick: () => openSearch(date) }, 'Ajouter'),
-    ),
+    h('header', { class: 'screen-head' }, screenTitle('Repas')),
     dayNav(date, now),
     sectionTitle('Ton budget'),
     summaryCard(date),
     sectionTitle(date === now ? 'Tes repas du jour' : 'Tes repas'),
     mealsCard(date),
-    sectionTitle('Des idées'),
-    ideasCarousel(date),
+    ...(cyc ? [sectionTitle('Selon ton cycle'), cyc] : []),
+    // The cycle card already carries 3 ideas: the generic carousel only shows without it.
+    ...(cyc ? [] : [sectionTitle('Des idées'), ideasCarousel(date)]),
     sectionTitle('Tes favoris'),
     favoritesCard(),
   );
@@ -542,14 +542,18 @@ function summaryCard(date: string): HTMLElement {
 
   return h('section', { class: 'card ux solo' },
     h('div', { class: 'td-energy' },
-      keyBubble(fmtInt(Math.abs(rest)), 'kcal', over ? 'en plus' : 'restantes', over ? 'warn' : 'pink'),
+      keyBubble(fmtInt(Math.abs(rest)), 'kcal', over ? 'en plus' : 'restantes', over ? 'warn' : 'plain'),
       h('div', { class: 'td-energy-side' }, side),
     ),
-    over ? h('p', { class: 'small muted', style: 'text-align:center' }, 'Pas grave, on lisse sur la semaine.') : null,
-    h('p', { class: 'small muted num', style: 'text-align:center' },
+    over ? h('p', { class: 'small muted' }, 'Pas grave, on lisse sur la semaine.') : null,
+    h('p', { class: 'small muted num' },
       `Mangé ${fmtInt(eaten.kcal)} kcal sur ${fmtInt(t.budget)}`,
       t.sportBonus > 0 ? ` · dont +${fmtInt(t.sportBonus)} sport` : '',
       cycleExtra > 0 ? ` · +${fmtInt(cycleExtra)} cycle` : ''),
+    h('div', { class: 'row', style: 'gap:8px' },
+      h('button', { class: 'btn primary grow food-big', type: 'button', onclick: () => openSearch(date) }, 'Ajouter un aliment'),
+      h('button', { class: 'btn', type: 'button', onclick: () => openSearch(date, undefined, true) }, 'Scanner'),
+    ),
     disclosure('Voir le détail', () => [
       h('p', { class: 'small muted num' }, `Lipides ${fmtG(eaten.fat)} g · glucides ${fmtG(eaten.carbs)} g.`),
       weekLine(date),
@@ -575,7 +579,7 @@ function mealsCard(date: string): HTMLElement {
       infoRow({
         icon: SLOT_ICON[slot],
         title: SLOT_LABEL[slot],
-        detail: meals.length ? h('span', { class: 'num' }, `${fmtInt(kcal)} kcal`) : 'Rien de noté',
+        detail: meals.length ? h('span', { class: 'num' }, `${fmtInt(kcal)} kcal`) : '—',
         trail: h('button', {
           class: 'btn-icon food-add', type: 'button', 'aria-label': `Ajouter : ${SLOT_LABEL[slot]}`,
           onclick: () => openSearch(date, slot),
@@ -594,13 +598,10 @@ function mealsCard(date: string): HTMLElement {
     );
   });
   return h('section', { class: 'card ux solo' },
-    slots,
-    h('button', { class: 'btn primary block food-big', type: 'button', onclick: () => openSearch(date) }, 'Ajouter un aliment'),
-    h('div', { class: 'grid-2 food-alt' },
-      h('button', { class: 'btn', type: 'button', onclick: () => openSearch(date, undefined, true) }, 'Scanner'),
-      h('button', { class: 'btn', type: 'button', onclick: () => openAddSheet(date) }, 'Autres options'),
-    ),
-    !day.meals.length && date !== today() ? h('p', { class: 'small muted', style: 'text-align:center' }, 'Rien de noté ce jour-là.') : null,
+    !day.meals.length
+      ? h('p', { class: 'small muted' }, date === today() ? 'Rien de noté pour l’instant. Commence par ce que tu viens de manger.' : 'Rien de noté ce jour-là.')
+      : null,
+    h('div', { class: 'row-list food-slots' }, slots),
     h('button', { class: 'food-slip', type: 'button', onclick: () => openSlipSheet(date) }, 'J’ai craqué'),
   );
 }

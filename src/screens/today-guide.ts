@@ -1,18 +1,17 @@
-// Today, "coach du jour" building blocks:
-//   cycleHero    — TON CYCLE first: ring "tu es ici", phase, meaning, next period, recovery pill
-//   plateCard    — TON ASSIETTE: kcal bubble + Calories / Protéines bars + water, phase food
-//                  focus, 3 ideas added in 2 taps, favour / limit folded
-//   regulateCard — POUR TE RÉGULER: ≤ 3 actions picked for the moment (tick = pillar),
-//                  breathing shortcut, the 8 pillars as one-tap chips
+// Today, "coach du jour" building blocks (direction B "Évoluer"):
+//   cycleHero     — TON CYCLE as one compact row: 52 px ring, phase, next period, recovery chip
+//   plateRow      — the plate as one hairline row: kcal left (22), thin bar, "Ajouter"
+//   cycleFoodCard — phase food focus + ideas + favour / limit (lives on Repas now)
+//   regulateRows  — the moment's tips as check rows (tick = pillar) + breathingRow
 // Content comes from lib/cycle-guide (guideFor); this file only lays it out.
 
 import type { Meal, MealSlot } from '../types';
 import type { ScreenCtx } from './types';
 import { store, uid } from '../store';
 import {
-  h, bar, fmtInt, fmtKg, openSheet, toast, keyBubble, disclosure, actionLink, infoRow, iconCircle, segmented, ICON,
+  h, bar, fmtInt, fmtKg, openSheet, toast, keyBubble, disclosure, iconCircle, segmented, checkRow, ICON,
 } from '../lib/ui';
-import { addDays, daysBetween, fmtDayMonth } from '../lib/dates';
+import { addDays, daysBetween } from '../lib/dates';
 import { targets, totals } from '../lib/nutrition';
 import { adviceFor, cycleOn, cycleSettings, phaseLabel } from '../lib/cycle';
 import { HABITS, COHERENCE_TARGET } from '../lib/habits';
@@ -23,7 +22,7 @@ import type { CycleGuide, GuideIdea, GuideOptions, GuideTip, Moment } from '../l
 import { cycleLog, hereSentence, openPeriodSheet } from './cycle-calendar';
 import { openFoodSearch, slotForNow } from './food-search';
 import { openBreathing } from './breathing';
-import { cycleStrip, cycleLegend } from './cycle-strip';
+import { cycleRing } from './today-ring';
 import { openLogSheet } from './training';
 import {
   toggleHabit, markDone, popCls, recoveryLevel, recoveryLine, recoveryNumbers, RECOVERY_LABEL, openGarminSheet, lateBlock,
@@ -60,23 +59,23 @@ export function recoveryRow(date: string): HTMLElement {
     h('span', { class: 'info-chev', 'aria-hidden': 'true' }, '›'));
 }
 
-/** Small recovery pill (compact hero). Null without numbers. */
+/** Recovery chip of the cycle row (its own 44 px button). Null without numbers. */
 function recoveryPill(date: string): HTMLElement | null {
   const lvl = recoveryLevel(date, store.state.days);
   if (!lvl) return null;
   return h('button', { class: `dc-pill lvl-${lvl}`, type: 'button', onclick: () => openGarminSheet(date), 'aria-label': `${RECOVERY_LABEL[lvl]}. Voir tes chiffres` },
-    h('span', { class: 'dc-rec-dot', 'aria-hidden': 'true' }), RECOVERY_LABEL[lvl]);
+    RECOVERY_LABEL[lvl]);
 }
 
-/** "Comment tu te sens ?": energy + symptoms of today, in a sheet. */
+/** "Comment tu te sens ?": energy + symptoms of today, in a sheet (opened from Équilibre). */
 export function openFeelSheet(date: string) {
   const body = h('div', { class: 'stack' });
   const paint = () => body.replaceChildren(
-    h('p', { class: 'small muted' }, 'Ton énergie et ce que tu ressens : le coach en tient compte pour tes conseils.'),
+    h('p', { class: 'small muted' }, 'Ton énergie, un symptôme, ce que tu ressens : le coach en tient compte pour tes conseils.'),
     cycleLog(date, { title: null, explicit: false, after: paint }),
   );
   paint();
-  openSheet('Comment tu te sens ?', body);
+  openSheet('Noter un symptôme', body);
 }
 
 function openTestSheet(date: string) {
@@ -89,8 +88,8 @@ function openTestSheet(date: string) {
 }
 
 /**
- * TON CYCLE: full in the morning (ring 112 px, meaning, next period, recovery, "Comment tu te sens ?"),
- * compact later (mini ring row + recovery pill). Null when cycle tracking is off.
+ * TON CYCLE: one compact row at every moment (52 px ring, phase 18, one detail line 14,
+ * the recovery chip as its own button). The whole row opens Équilibre. Null when tracking is off.
  */
 export function cycleHero(date: string, moment: Moment, ctx: ScreenCtx, guide: Guide | null): HTMLElement | null {
   const p = store.profile;
@@ -101,78 +100,60 @@ export function cycleHero(date: string, moment: Moment, ctx: ScreenCtx, guide: G
     const since = cs.pregnantSince ?? date;
     const n = Math.max(0, daysBetween(since, date));
     const weeks = Math.floor(n / 7);
-    return h('section', { class: 'card ux paper dc-hero', 'aria-label': 'Ta grossesse' },
-      h('div', { class: 'dc-hero-top' },
-        weeks ? keyBubble(String(weeks), 'sem.', n % 7 ? `et ${n % 7} j` : undefined) : keyBubble(String(n), 'j'),
-        h('div', { class: 'dc-hero-text' },
-          h('span', { class: 'eyebrow' }, 'Mode grossesse'),
-          h('h2', null, 'Ta grossesse'),
-          h('p', { class: 'small' }, PREG_SHORT),
+    return h('section', { class: 'card ux dc-hero cyc-row', 'aria-label': 'Ta grossesse' },
+      h('div', { class: 'dc-hero-row' },
+        h('button', { class: 'dc-hero-main', type: 'button', onclick: () => ctx.go('balance') },
+          h('span', { class: 'icon-circle', 'aria-hidden': 'true' }, h('span', { class: 'icon-glyph num' }, weeks ? `${weeks}s` : `${n}j`)),
+          h('span', { class: 'info-main' },
+            h('span', { class: 'info-title' }, weeks ? `${weeks} sem.${n % 7 ? ` et ${n % 7} j` : ''}` : `${n} j`),
+            h('span', { class: 'info-detail' }, PREG_SHORT)),
         ),
+        recoveryPill(date),
       ),
-      recoveryRow(date),
-      actionLink('Voir mon suivi', () => ctx.go('balance')),
     );
   }
 
   const info = cycleOn(date, p, store.state.days);
   if (!info) {
-    return h('section', { class: 'card ux paper dc-hero solo' },
-      infoRow({ icon: ICON.cycle, title: 'Ton cycle', detail: 'Note le 1er jour de tes dernières règles : chaque jour, tu sauras où tu en es.' }),
-      h('button', { class: 'btn primary block', type: 'button', onclick: () => openPeriodSheet(date, true) }, 'Noter mes dernières règles'),
-    );
-  }
-
-  const adv = adviceFor(info, p, date);
-  const label = guide?.label ?? phaseLabel(info.phase);
-  const meaning = guide?.meaning ?? adv.headline;
-  const here = hereSentence(date, info);
-
-  if (moment === 'matin') {
-    const n = daysBetween(date, info.nextPeriod);
-    const late = info.phase === 'retard';
-    const when = late
-      ? `règles estimées le ${fmtDayMonth(info.nextPeriod)}`
-      : `règles ~${fmtDayMonth(info.nextPeriod)}\u00a0· ${n <= 0 ? 'aujourd’hui' : n === 1 ? 'demain' : `dans\u00a0${n}\u00a0j`}`;
-    const testBtn = late && cs.ttc
-      ? h('button', { class: 'chip dc-chip-btn', type: 'button', onclick: () => openTestSheet(date) }, 'Faire un test')
-      : null;
-    return h('section', { class: 'card ux paper dc-hero', 'aria-label': 'Ton cycle' },
-      h('div', { class: 'dc-hero-text' },
-        h('span', { class: 'eyebrow' }, 'Tu es ici'),
-        h('h2', null, info.phase === 'retard' ? label : `J${info.day} · ${label}`),
-        h('p', { class: 'italic dc-hero-day' }, when.charAt(0).toUpperCase() + when.slice(1)),
-      ),
-      cycleStrip(date, info),
-      cycleLegend(),
-      h('p', { class: 'dc-hero-meaning' }, meaning),
-      testBtn,
-      recoveryRow(date),
-      h('div', { class: 'dc-hero-foot' },
-        h('button', { class: 'btn sm', type: 'button', onclick: () => openFeelSheet(date) }, 'Comment tu te sens ?'),
-        h('button', { class: 'dc-link', type: 'button', onclick: () => ctx.go('balance') }, 'Voir mon cycle ›'),
-      ),
-    );
-  }
-
-  // Compact (journée / soir).
-  let tomorrow: string | null = null;
-  if (moment === 'soir') {
-    const t = cycleOn(addDays(date, 1), p, store.state.days);
-    if (t && t.phase !== info.phase) tomorrow = `Demain : J${t.day} · ${phaseLabel(t.phase)}`;
-  }
-  return h('section', { class: 'card ux paper dc-hero compact', 'aria-label': 'Ton cycle' },
-    h('div', { class: 'dc-hero-row' },
-      h('button', { class: 'dc-hero-main', type: 'button', onclick: () => ctx.go('balance'), 'aria-label': `${here} Voir mon cycle` },
-        h('span', { class: 'info-main' },
-          h('span', { class: 'info-title' }, info.phase === 'retard' ? label : `J${info.day} · ${label}`),
-          h('span', { class: 'info-detail' }, meaning),
+    return h('section', { class: 'card ux dc-hero cyc-row' },
+      h('div', { class: 'dc-hero-row' },
+        h('button', { class: 'dc-hero-main', type: 'button', onclick: () => openPeriodSheet(date, true) },
+          iconCircle(ICON.cycle),
+          h('span', { class: 'info-main' },
+            h('span', { class: 'info-title' }, 'Ton cycle'),
+            h('span', { class: 'info-detail' }, 'Note le 1er jour de tes dernières règles')),
         ),
       ),
-      recoveryPill(date),
+    );
+  }
+
+  const label = guide?.label ?? phaseLabel(info.phase);
+  const here = hereSentence(date, info);
+  const late = info.phase === 'retard';
+  const n = daysBetween(date, info.nextPeriod);
+  let detail = late
+    ? (info.lateBy >= 1 ? `Règles en retard de ${info.lateBy} j` : 'Règles attendues aujourd’hui')
+    : info.phase === 'regles'
+      ? `Jour ${info.day} des règles`
+      : n <= 0 ? 'Règles attendues aujourd’hui' : n === 1 ? 'Règles demain' : `Règles dans ~${n} j`;
+  if (moment === 'soir') {
+    const t = cycleOn(addDays(date, 1), p, store.state.days);
+    if (t && t.phase !== info.phase) detail = `Demain : J${t.day} · ${phaseLabel(t.phase).replace(/^Phase /, '')}`;
+  }
+  const testBtn = late && cs.ttc
+    ? h('button', { class: 'chip dc-pill', type: 'button', onclick: () => openTestSheet(date) }, 'Faire un test')
+    : null;
+  return h('section', { class: 'card ux dc-hero cyc-row', 'aria-label': 'Ton cycle' },
+    h('div', { class: 'dc-hero-row' },
+      h('button', { class: 'dc-hero-main', type: 'button', onclick: () => ctx.go('balance'), 'aria-label': `${here} Voir mon cycle` },
+        cycleRing(info, { size: 52, periodLength: p.cycle?.periodLength ?? 5, label: here }),
+        h('span', { class: 'info-main' },
+          h('span', { class: 'info-title' }, label),
+          h('span', { class: 'info-detail' }, detail),
+        ),
+      ),
+      testBtn ?? recoveryPill(date),
     ),
-    cycleStrip(date, info, { ends: false }),
-    tomorrow ? h('p', { class: 'small dc-hero-tomorrow' }, tomorrow) : null,
   );
 }
 
@@ -254,110 +235,72 @@ export function openIdeaSheet(date: string, idea: GuideIdea, slot: MealSlot) {
   const sheet = openSheet(idea.name, body);
 }
 
-export function plateCard(date: string, moment: Moment, ctx: ScreenCtx, guide: Guide | null): HTMLElement {
-  const p = store.profile;
-  const pregnant = cycleSettings(p).pregnant;
-  const day = store.getDay(date);
-  const { t, eaten, cycleExtra, left, protLeft } = budgetOn(date);
+/**
+ * The plate as one row: "1 500" (22) kcal left, a thin bar and "Ajouter" (food search on the
+ * slot of the moment, recent foods first). Evening: "660 kcal pour ton dîner".
+ */
+export function plateRow(date: string, moment: Moment, ctx: ScreenCtx): HTMLElement {
+  const pregnant = cycleSettings(store.profile).pregnant;
+  const { t, eaten, left, protLeft } = budgetOn(date);
   const over = left < 0;
-  const water = day.water ?? 0;
-  const setWater = (v: number) => {
-    markDone('water');
-    const next = Math.max(0, Math.round(v * 4) / 4);
-    void store.updateDay(date, (d) => { d.water = next; });
-  };
-
-  const macro = (label: string, value: number, target: number, unit: string, ceiling = false) => {
-    const r = target ? value / target : 0;
-    const tone = ceiling ? (r > 1 ? 'warn' : 'accent') : r >= 1 ? 'good' : 'accent';
-    return h('div', { class: 'td-mini' },
-      h('div', { class: 'td-mini-top' },
-        h('span', { style: 'font-weight:700' }, label),
-        h('span', { class: 'num muted' }, `${fmtInt(value)} / ${fmtInt(target)} ${unit}${ceiling ? ' max' : ''}`),
-      ),
-      bar(r, tone),
-    );
-  };
-
-  const bubble = pregnant
-    ? keyBubble(fmtInt(protLeft), 'g', 'protéines restantes', 'pink')
-    : keyBubble(fmtInt(Math.abs(left)), 'kcal', over ? 'en plus' : 'restantes', over ? 'warn' : 'pink');
-
-  const card = h('section', { class: 'card ux dc-plate' });
-  const add = (...nodes: (Node | null)[]) => card.append(...nodes.filter((x): x is Node => !!x));
-  if (moment === 'soir' && !pregnant && !over) {
-    add(h('p', { class: 'dc-plate-lead' }, `${fmtInt(left)} kcal pour ton dîner`, protLeft ? h('span', { class: 'muted' }, ` · ${fmtInt(protLeft)} g de protéines` ) : null));
-  }
-  add(
-    h('div', { class: 'td-energy' },
-      bubble,
-      h('div', { class: 'td-energy-side' },
-        macro('Calories', eaten.kcal, t.budget, 'kcal'),
-        macro('Protéines', eaten.protein, t.protein, 'g'),
-        h('div', { class: 'td-water' },
-          h('div', { class: 'td-mini' },
-            h('span', { class: 'small', style: 'font-weight:700' }, 'Eau & tisanes'),
-            h('span', { class: 'num small muted' + popCls('water') }, `${fmtKg(water)} / ${fmtKg(t.waterL)} L`),
-          ),
-          h('div', { class: 'row', style: 'gap:6px' },
-            h('button', { class: 'btn-icon', type: 'button', 'aria-label': 'Retirer 0,25 L', disabled: water <= 0, onclick: () => setWater(water - 0.25) }, '−'),
-            h('button', { class: 'btn-icon', type: 'button', 'aria-label': 'Ajouter 0,25 L', onclick: () => setWater(water + 0.25) }, '+'),
-          ),
-        ),
-      ),
+  const slot = slotFor(moment);
+  let fig: string, lbl: string;
+  if (pregnant) { fig = fmtInt(protLeft); lbl = 'g de protéines restantes'; }
+  else if (over) { fig = fmtInt(-left); lbl = 'kcal en plus, ce n’est pas grave'; }
+  else if (moment === 'soir') { fig = fmtInt(left); lbl = 'kcal pour ton dîner'; }
+  else { fig = fmtInt(left); lbl = 'kcal restantes'; }
+  const ratio = pregnant ? (t.protein ? eaten.protein / t.protein : 0) : t.budget ? eaten.kcal / t.budget : 0;
+  return h('div', { class: 'dc-plate-row dc-plate' },
+    h('div', { class: 'dc-plate-top' },
+      iconCircle(ICON.fork),
+      h('button', {
+        class: 'dc-plate-fig', type: 'button', style: 'background:none;border:0;padding:0;font:inherit;color:inherit;text-align:left;cursor:pointer',
+        onclick: () => ctx.go('food'), 'aria-label': `${fig} ${lbl}. Voir mes repas`,
+      },
+        h('span', { class: 'num' }, fig),
+        h('span', { class: 'kcal-l' }, lbl)),
+      h('button', { class: 'btn sm', type: 'button', onclick: () => openFoodSearch(date, slot) }, 'Ajouter'),
     ),
-    over ? h('p', { class: 'small muted', style: 'text-align:center' }, 'Pas grave, c’est une journée parmi d’autres. Demain on reprend.') : null,
+    bar(ratio, over ? 'warn' : 'accent'),
+    !pregnant && protLeft > 0 && moment !== 'matin'
+      ? h('p', { class: 'dc-plate-sub' }, `encore ${fmtInt(protLeft)} g de protéines`)
+      : null,
   );
+}
 
-  if (guide) {
-    const n = guide.nutrition;
-    const ideas = n.ideas;
-    const slot = slotFor(moment);
-    add(
-      h('div', { class: 'dc-plate-guide' },
-        h('span', { class: 'eyebrow' }, `Selon ton cycle · ${guide.label}`),
-        h('h3', null, n.title),
-        n.why ? h('p', { class: 'small' }, n.why) : null,
-      ),
-      ideas.length
-        ? h('div', { class: 'dc-ideas', role: 'list', 'aria-label': moment === 'soir' ? 'Idées pour ton dîner' : 'Idées du coach' },
-            ideas.map((i) => h('button', {
-              class: 'dc-idea', type: 'button', role: 'listitem',
-              'aria-label': `Ajouter ${i.name}`,
-              onclick: () => openIdeaSheet(date, i, slot),
-            },
-              h('span', { class: 'dc-idea-main' },
-                h('span', { class: 'dc-idea-name' }, i.name),
-                i.kcal !== undefined || i.protein !== undefined
-                  ? h('span', { class: 'dc-idea-sub num' }, [i.kcal !== undefined ? `${fmtInt(i.kcal)} kcal` : null, i.protein !== undefined ? `${fmtInt(i.protein)} g prot.` : null].filter(Boolean).join(' · '))
-                  : null),
-              h('span', { class: 'dc-idea-add', 'aria-hidden': 'true' }, '+'),
-            )))
-        : null,
-      disclosure('À privilégier, à limiter, budget', () => [
-        n.favour.length ? h('div', { class: 'stack', style: 'gap:6px' }, h('h3', null, 'À privilégier'), h('ul', { class: 'bal-list small' }, n.favour.map((x) => h('li', null, x)))) : null,
-        n.limit.length ? h('div', { class: 'stack', style: 'gap:6px' }, h('h3', null, 'À limiter'), h('ul', { class: 'bal-list small' }, n.limit.map((x) => h('li', null, x)))) : null,
-        n.ttcNote ? h('div', { class: 'stack', style: 'gap:6px' }, h('h3', null, cycleSettings(p).ttc ? 'Essai bébé' : 'Bon à savoir'), h('p', { class: 'small' }, n.ttcNote)) : null,
-        n.weight ? h('div', { class: 'stack', style: 'gap:6px' }, h('h3', null, 'Et la balance ?'), h('p', { class: 'small' }, n.weight)) : null,
-        budgetDetail(),
-      ], `dc-plate-more-${date}`, 'Replier'),
-    );
-  } else {
-    add(disclosure('Détail du budget', budgetDetail, 'td-energy', 'Replier'));
-  }
-  add(actionLink('Voir mes repas', () => ctx.go('food')));
-  return card;
-
-  function budgetDetail() {
-    return h('div', { class: 'stack', style: 'gap:6px' },
-      h('h3', null, 'Ton budget'),
-      h('p', { class: 'small muted num' },
-        (t.sportBonus ? `objectif ${fmtInt(t.kcal)} + ${fmtInt(t.sportBonus)} sport` : `objectif ${fmtInt(t.kcal)} kcal`) +
-        (cycleExtra > 0 ? ` · dont +${fmtInt(cycleExtra)} kcal (cycle)` : '')),
-      h('p', { class: 'small muted num' }, `${fmtInt(eaten.kcal)} kcal mangées sur ${fmtInt(t.budget)}`),
-      t.carbsMax !== undefined ? macro('Glucides', eaten.carbs, t.carbsMax, 'g', true) : null,
-    );
-  }
+/** "Selon ton cycle": the phase food focus, ideas in 2 taps, favour / limit folded (Repas). */
+export function cycleFoodCard(date: string, guide: Guide | null): HTMLElement | null {
+  if (!guide) return null;
+  const p = store.profile;
+  const n = guide.nutrition;
+  const slot = slotForNow();
+  return h('section', { class: 'card ux solo dc-plate-guide-card' },
+    h('div', { class: 'stack', style: 'gap:4px' },
+      h('span', { class: 'eyebrow' }, guide.label),
+      h('h3', null, n.title),
+      n.why ? h('p', { class: 'small muted' }, n.why) : null,
+    ),
+    n.ideas.length
+      ? h('div', { class: 'row-list', role: 'list', 'aria-label': 'Idées du coach' },
+          n.ideas.map((i) => h('button', {
+            class: 'dc-idea', type: 'button', role: 'listitem', 'aria-label': `Ajouter ${i.name}`,
+            onclick: () => openIdeaSheet(date, i, slot),
+          },
+            h('span', { class: 'dc-idea-main' },
+              h('span', { class: 'dc-idea-name' }, i.name),
+              i.kcal !== undefined || i.protein !== undefined
+                ? h('span', { class: 'dc-idea-sub num' }, [i.kcal !== undefined ? `${fmtInt(i.kcal)} kcal` : null, i.protein !== undefined ? `${fmtInt(i.protein)} g prot.` : null].filter(Boolean).join(' · '))
+                : null),
+            h('span', { class: 'dc-idea-add', 'aria-hidden': 'true' }, '+'),
+          )))
+      : null,
+    disclosure('À privilégier, à limiter', () => [
+      n.favour.length ? h('div', { class: 'stack', style: 'gap:6px' }, h('h3', null, 'À privilégier'), h('ul', { class: 'bal-list small' }, n.favour.map((x) => h('li', null, x)))) : null,
+      n.limit.length ? h('div', { class: 'stack', style: 'gap:6px' }, h('h3', null, 'À limiter'), h('ul', { class: 'bal-list small' }, n.limit.map((x) => h('li', null, x)))) : null,
+      n.ttcNote ? h('div', { class: 'stack', style: 'gap:6px' }, h('h3', null, cycleSettings(p).ttc ? 'Essai bébé' : 'Bon à savoir'), h('p', { class: 'small' }, n.ttcNote)) : null,
+      n.weight ? h('div', { class: 'stack', style: 'gap:6px' }, h('h3', null, 'Et la balance ?'), h('p', { class: 'small' }, n.weight)) : null,
+    ], `food-cycle-more-${date}`, 'Replier'),
+  );
 }
 
 // ---------- POUR TE RÉGULER ----------
@@ -377,104 +320,43 @@ function fallbackTips(moment: Moment, hb: Record<string, boolean>): GuideTip[] {
   }));
 }
 
-const SHORT: Record<string, string> = {
-  sleep: 'Sommeil', light: 'Lumière', coherence: 'Respirer', walk: 'Marche',
-  coffee: 'Thé < 14 h', screens: 'Écrans off', breakfast: 'Petit-déj', me: 'Moi',
-};
-const CHIP_ORDER: Record<Moment, string[]> = {
-  matin: ['light', 'breakfast', 'coffee', 'coherence', 'walk', 'me', 'screens', 'sleep'],
-  journee: ['walk', 'coherence', 'me', 'coffee', 'breakfast', 'light', 'screens', 'sleep'],
-  soir: ['screens', 'sleep', 'me', 'coherence', 'walk', 'coffee', 'breakfast', 'light'],
-};
-
-const checkMark = () => h('span', { class: 'dc-check-mark', 'aria-hidden': 'true' }, '✓');
-
-function openPillarsWhy(date: string) {
-  const body = h('div', { class: 'stack' });
-  const paint = () => {
-    const hb = store.getDay(date).habits ?? {};
-    body.replaceChildren(
-      h('p', { class: 'small muted' }, 'Pas besoin de tout cocher : un pilier, c’est déjà une bonne journée.'),
-      ...HABITS.map((x) => h('div', { class: 'bal-habit' + (hb[x.key] ? ' on' : '') },
-        h('button', { class: 'bal-check' + (hb[x.key] ? ' on' : ''), type: 'button', 'aria-pressed': hb[x.key] ? 'true' : 'false', 'aria-label': x.label, onclick: () => { toggleHabit(date, x.key); paint(); } }, hb[x.key] ? '✓' : ''),
-        h('div', { class: 'main' }, h('span', { class: 'bal-label', style: 'cursor:default' }, x.label), h('p', { class: 'sub' }, x.why)),
-      )),
-    );
-  };
-  paint();
-  openSheet('Tes piliers', body);
-}
-
-/** The 8 pillars as one-tap chips, ordered for the moment. */
-export function pillarChips(date: string, moment: Moment): HTMLElement {
-  const hb = store.getDay(date).habits ?? {};
-  const done = HABITS.filter((x) => hb[x.key]).length;
-  return h('div', { class: 'dc-pillars' },
-    h('div', { class: 'dc-pillars-head' },
-      h('span', { class: 'eyebrow' }, 'Tes piliers'),
-      h('span', { class: 'num small muted' }, `${done}/${HABITS.length}`),
-      h('button', { class: 'dc-link', type: 'button', onclick: () => openPillarsWhy(date) }, 'Pourquoi ?'),
-    ),
-    h('div', { class: 'dc-chips', role: 'group', 'aria-label': 'Tes piliers du jour' },
-      CHIP_ORDER[moment].filter((k) => HABIT_KEYS.has(k)).map((k) => {
-        const on = !!hb[k];
-        const full = HABITS.find((x) => x.key === k)?.label ?? k;
-        return h('button', {
-          class: 'dc-chip' + (on ? ' on' : '') + popCls(`hb-${k}`), type: 'button',
-          'aria-pressed': on ? 'true' : 'false', 'aria-label': full, title: full,
-          onclick: () => toggleHabit(date, k),
-        }, on ? checkMark() : null, SHORT[k] ?? k);
-      }),
-    ),
-  );
-}
-
-function breathingRow(date: string, title = 'Respirer 5 min'): HTMLElement {
+/** "Respirer 5 min" as one row: dots of the day + "Commencer". */
+export function breathingRow(date: string, title = 'Respirer 5 min'): HTMLElement {
   const n = store.getDay(date).wellbeing?.breathing ?? 0;
-  return h('div', { class: 'dc-act' },
-    iconCircle(ICON.wave, 'dc-act-ic'),
-    h('span', { class: 'dc-act-main' },
-      h('span', { class: 'dc-act-title' }, title),
-      h('span', { class: 'dc-act-detail' },
+  return h('div', { class: 'dc-breath-row' },
+    iconCircle(ICON.wave),
+    h('span', { class: 'info-main' },
+      h('span', { class: 'info-title' }, title),
+      h('span', { class: 'info-detail' },
         h('span', { class: 'dc-dots', 'aria-label': `${Math.min(n, COHERENCE_TARGET)} sur ${COHERENCE_TARGET} aujourd’hui` },
           Array.from({ length: COHERENCE_TARGET }, (_, i) => h('i', { class: i < n ? 'on' : '' }))),
         ` ${Math.min(n, 99)}/${COHERENCE_TARGET} aujourd’hui`),
     ),
-    h('button', { class: 'btn sm primary', type: 'button', onclick: () => openBreathing(date) }, 'Commencer'),
+    h('button', { class: 'btn sm', type: 'button', onclick: () => openBreathing(date) }, 'Commencer'),
   );
 }
 
-export function regulateCard(date: string, moment: Moment, guide: Guide | null): HTMLElement {
+/**
+ * The moment's tips as check rows (one tap = the pillar ticked), at most `max`.
+ * A tip with a "why" opens it on a tap on its text. Breathing tips are skipped:
+ * the caller adds one breathingRow().
+ */
+export function regulateRows(date: string, moment: Moment, guide: Guide | null, max = 3): HTMLElement[] {
   const day = store.getDay(date);
   const hb = day.habits ?? {};
-  const tips = guide?.regulate?.length ? guide.regulate : fallbackTips(moment, hb);
-
-  const main = (tip: GuideTip) => h('span', { class: 'dc-act-main' },
-    h('span', { class: 'dc-act-title' }, tip.title),
-    tip.detail ? h('span', { class: 'dc-act-detail' }, tip.detail) : null,
-  );
-  const why = (tip: GuideTip) => tip.why
-    ? h('button', { class: 'dc-why', type: 'button', 'aria-label': `Pourquoi : ${tip.title}`, onclick: () => openSheet(tip.title, h('p', null, tip.why ?? '')) }, 'i')
-    : null;
+  const tips = (guide?.regulate?.length ? guide.regulate : fallbackTips(moment, hb)).filter((t) => t.action !== 'breathing');
+  const why = (tip: GuideTip) => tip.why ? () => openSheet(tip.title, h('p', null, tip.why ?? '')) : undefined;
 
   const rows: HTMLElement[] = [];
-  let breathing = false;
   for (const tip of tips) {
-    if (tip.action === 'breathing') {
-      breathing = true;
-      rows.push(breathingRow(date, tip.title));
-      continue;
-    }
+    if (rows.length >= max) break;
     const fromAction = tip.action === 'walk' ? 'walk' : tip.action === 'sleep' ? 'sleep' : tip.action?.startsWith('habit:') ? tip.action.slice(6) : undefined;
     const hk = [tip.habitKey, fromAction].find((k): k is string => !!k && HABIT_KEYS.has(k)) ?? null;
     if (hk) {
-      const on = !!hb[hk];
-      rows.push(h('div', { class: 'dc-act-wrap' },
-        h('button', {
-          class: 'dc-act tap' + (on ? ' on' : ''), type: 'button', 'aria-pressed': on ? 'true' : 'false',
-          onclick: () => toggleHabit(date, hk),
-        }, h('span', { class: 'dc-box' + (on ? ' on' : '') + popCls(`hb-${hk}`), 'aria-hidden': 'true' }, on ? '✓' : ''), main(tip)),
-        why(tip)));
+      rows.push(checkRow({
+        title: tip.title, detail: tip.detail, on: !!hb[hk], cls: popCls(`hb-${hk}`).trim(),
+        onToggle: () => toggleHabit(date, hk), onOpen: why(tip),
+      }));
       continue;
     }
     let btn: HTMLElement | null = null;
@@ -484,35 +366,26 @@ export function regulateCard(date: string, moment: Moment, guide: Guide | null):
         class: 'btn sm' + popCls('water-tip'), type: 'button', 'aria-label': 'Ajouter 0,25 L d’eau',
         onclick: () => { markDone('water-tip'); void store.updateDay(date, (d) => { d.water = Math.round(((d.water ?? 0) + 0.25) * 4) / 4; }); },
       }, `+ 0,25 L · ${fmtKg(w)}`);
-    } else if (tip.action === 'plate') {
-      btn = h('button', { class: 'btn sm', type: 'button', onclick: () => document.querySelector('.dc-plate')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }, 'Voir');
     } else if (tip.action === 'mobility') {
       btn = h('button', { class: 'btn sm', type: 'button', onclick: () => openLogSheet({ sport: 'mobility', minutes: 10 }) }, 'Noter');
     } else if (tip.action === 'test') {
       btn = h('button', { class: 'btn sm', type: 'button', onclick: () => openTestSheet(date) }, 'Le test');
     }
-    if (!btn) {
-      // No pillar and no action: still a one-tap tick, kept for the day.
-      const on = !!day.tips?.[tip.id];
-      rows.push(h('div', { class: 'dc-act-wrap' },
-        h('button', {
-          class: 'dc-act tap' + (on ? ' on' : ''), type: 'button', 'aria-pressed': on ? 'true' : 'false',
-          onclick: () => { markDone(`tip-${tip.id}`); void store.updateDay(date, (d) => { d.tips = { ...(d.tips ?? {}), [tip.id]: !on }; }); },
-        }, h('span', { class: 'dc-box' + (on ? ' on' : '') + popCls(`tip-${tip.id}`), 'aria-hidden': 'true' }, on ? '✓' : ''), main(tip)),
-        why(tip)));
+    if (btn) {
+      rows.push(h('div', { class: 'check-row' },
+        h('span', { class: 'check', 'aria-hidden': 'true', style: 'cursor:default' }, iconCircle(tip.action === 'water' ? ICON.drop : ICON.leaf)),
+        h('span', { class: 'check-main', style: 'cursor:default' },
+          h('span', { class: 'check-title' }, tip.title),
+          tip.detail ? h('span', { class: 'check-detail' }, tip.detail) : null),
+        btn));
       continue;
     }
-    rows.push(h('div', { class: 'dc-act-wrap' },
-      h('div', { class: 'dc-act' }, h('span', { class: 'dc-box tip', 'aria-hidden': 'true' }), main(tip), btn),
-      why(tip)));
+    // No pillar and no action: still a one-tap tick, kept for the day.
+    const on = !!day.tips?.[tip.id];
+    rows.push(checkRow({
+      title: tip.title, detail: tip.detail, on, onOpen: why(tip),
+      onToggle: () => { markDone(`tip-${tip.id}`); void store.updateDay(date, (d) => { d.tips = { ...(d.tips ?? {}), [tip.id]: !on }; }); },
+    }));
   }
-  if (!breathing) rows.push(breathingRow(date));
-
-  return h('section', { class: 'card ux dc-reg' },
-    h('div', { class: 'dc-reg-head' },
-      h('h3', null, moment === 'soir' ? 'Pour bien dormir' : 'Pour te réguler'),
-      guide ? h('span', { class: 'small muted' }, guide.label) : null),
-    h('div', { class: 'dc-reg-list' }, rows),
-    pillarChips(date, moment),
-  );
+  return rows;
 }

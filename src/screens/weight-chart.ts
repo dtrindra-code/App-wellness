@@ -256,8 +256,8 @@ export function weightChart(
   if (weights.length < 2) {
     wrap.appendChild(h('p', { class: 'empty' },
       weights.length === 0
-        ? 'Ta courbe apparaîtra dès tes premières pesées. En attendant, voici le plan.'
-        : 'Première pesée notée. La moyenne se dessine dès la suivante.'));
+        ? 'Deux pesées et ta courbe apparaît. En attendant, voici le plan.'
+        : 'Première pesée notée. Encore une et ta courbe apparaît.'));
   }
   return wrap;
 }

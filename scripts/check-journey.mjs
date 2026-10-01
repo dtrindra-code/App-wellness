@@ -124,6 +124,8 @@ for (const cp of J.CHECKPOINTS) {
   }
 }
 ok(cp0.fields.some((f) => f.kind === 'wheel') && cp0.fields.some((f) => f.kind === 'values' && f.pick === 3) && cp0.fields.some((f) => f.key === 'intention' && f.kind === 'text'), 'day 0: wheel + intention + 3 values');
+ok(['hope', 'leaveBehind', 'cultivate', 'intention'].every((k) => cp0.fields.some((f) => f.kind === 'text' && f.key === k)), 'day 0: hope / leaveBehind / cultivate / intention');
+ok(/jardin/.test(cp0.intro), 'day 0 intro mentions the garden');
 ok(['intentionBack', 'innerChild', 'values', 'beliefs', 'strengths', 'learning'].every((k) => cp30.fields.some((f) => f.key === k)), 'day 30 fields');
 ok(cp30.fields.find((f) => f.key === 'intentionBack')?.options.length === 3, 'day 30: oui / non / en chemin');
 ok(['intentionBack', 'vision', 'gratitude', 'resilience', 'calm', 'learning'].every((k) => cp60.fields.some((f) => f.key === k)), 'day 60 fields');

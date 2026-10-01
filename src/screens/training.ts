@@ -92,7 +92,7 @@ function header(t: string): HTMLElement {
     eyebrow = [w ? `Semaine ${w.index}` : null, b?.name].filter(Boolean).join(' · ');
   }
   return h('header', { class: 'screen-head' },
-    h('div', { class: 'stack', style: 'gap:6px' }, screenTitle('Sport'), eyebrow ? h('p', { class: 'subtitle' }, eyebrow) : null),
+    h('div', { class: 'stack', style: 'gap:6px' }, screenTitle('Sport'), eyebrow ? h('p', { class: 'subtitle italic' }, eyebrow) : null),
   );
 }
 
@@ -128,7 +128,7 @@ function weekCard(mon: string, t: string): HTMLElement {
   const card = h('section', { class: 'card ux solo' }, nav);
   // Week browsing is local UI state: swap this card in place (no store write, no scroll jump).
   function redraw() { card.replaceWith(weekCard(addDays(mondayOf(t), 7 * weekOffset), t)); }
-  if (week?.focus) card.append(h('p', { class: 'quote', style: 'font-size:1rem' }, week.focus));
+  if (week?.focus) card.append(h('p', { class: 'quote', style: 'font-size:var(--fs-16)' }, week.focus));
 
   if (plannedMin > 0 || doneMin > 0) {
     const ratio = plannedMin ? doneMin / plannedMin : 1;
@@ -236,7 +236,7 @@ function openSessionSheet(orig: PlannedSession) {
     h('p', null, s.details),
     note ? h('p', { class: 'small sp-note' }, note) : null,
     s.mini
-      ? h('div', { class: 'card flat', style: 'padding:12px;gap:6px;background:var(--surface-2);border-color:transparent' },
+      ? h('div', { class: 'stack', style: 'gap:6px;padding:12px 0 0 14px;border-left:2px solid var(--pink-deep)' },
           h('div', { class: 'eyebrow' }, 'Version mini · 15 min'),
           h('p', { class: 'small' }, s.mini),
           h('p', { class: 'small muted' }, 'Faire la mini, ça compte comme fait.'),
@@ -444,7 +444,7 @@ function consistencyCard(t: string): HTMLElement {
 
   return h('section', { class: 'card ux solo' },
     h('div', { class: 'td-energy' },
-      keyBubble(String(streak), streak === 1 ? 'semaine' : 'semaines', 'd’affilée', 'ink'),
+      keyBubble(String(streak), streak === 1 ? 'semaine' : 'semaines', 'd’affilée'),
       h('div', { class: 'td-energy-side', style: 'gap:4px' },
         h('div', { style: 'font-weight:700' }, streak === 1 ? 'Semaine active' : 'Semaines actives'),
         h('div', { class: 'small muted' }, streak ? '2 séances ou plus par semaine. On continue comme ça.' : 'Deux séances cette semaine et le compteur démarre.'),

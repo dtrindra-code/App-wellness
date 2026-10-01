@@ -6,15 +6,15 @@
 
 import type { Checkin } from '../types';
 import { store } from '../store';
-import { h, s, iconCircle, ICON, disclosure } from '../lib/ui';
+import { h, s, disclosure, openSheet } from '../lib/ui';
 import { today, weekday, fmtDayMonth } from '../lib/dates';
 import {
   coachNow, coachMessages, slotAt, morningReply, eveningReply, weeklyReview, MOOD_LABELS,
 } from '../lib/coach';
 import type { CoachSlot, EveningAnswer } from '../lib/coach';
 import { openSlipSheet } from './slip';
-import { journeyDay } from '../lib/journey';
 import { openBreathing } from './breathing';
+import { journeyNeedsInline } from './journey';
 
 // ---------- transient UI state ----------
 /** Date whose morning / evening answer was just given (keeps the reply visible). */
@@ -22,17 +22,11 @@ let morningAnswered: string | null = null;
 let eveningAnswered: string | null = null;
 /** Draft of the evening note (kept across re-renders). */
 let eveningDraft = '';
+/** Dates whose coach message is shown in full ("Lire la suite"). */
+const bodyOpen = new Set<string>();
 const BILAN_KEY = 'cap-maldives:bilan-seen';
 
 const hourNow = () => { const d = new Date(); return d.getHours() + d.getMinutes() / 60; };
-
-const SLOT_ICON: Record<CoachSlot, string> = {
-  matin: ICON.sun,
-  midi: ICON.fork,
-  aprem: ICON.leaf,
-  soir: ICON.moon,
-  bilan: ICON.flag,
-};
 
 const SLOT_EYEBROW: Record<CoachSlot, string> = {
   matin: 'Ton coach · ce matin',
@@ -73,8 +67,10 @@ export interface CoachCardOpts {
   moment: CoachMoment;
   /** Extra line under the message (e.g. recovery when the cycle hero is hidden). */
   extra?: Node | null;
-  /** The weekly bilan card is shown below: don't repeat the bilan message here. */
+  /** The weekly bilan is shown inside this card: don't repeat the bilan message. */
   bilanShown?: boolean;
+  /** Sunday evening / Monday: the 2-line weekly bilan, shown inside the card. */
+  bilan?: HTMLElement | null;
   /** Local re-render for transient-state changes. */
   rerender?: () => void;
 }
@@ -100,8 +96,6 @@ export function coachDayCard(date: string = today(), o: CoachCardOpts = { moment
 
   const mood = ci?.morningMood;
   const ans = ci?.evening;
-  // "Revenir à moi" active: its energy check-in (CE MATIN) is the one morning question.
-  const journeyOn = isToday && journeyDay(date) !== null;
 
   if (o.moment === 'soir' && isToday && hour >= 18 && !ans) {
     // Evening question, answered in one tap in the same card.
@@ -111,33 +105,35 @@ export function coachDayCard(date: string = today(), o: CoachCardOpts = { moment
       EVENING.map((x) => h('button', {
         class: 'coach-mood', type: 'button', 'aria-label': x.label,
         onclick: () => { eveningAnswered = date; eveningDraft = ''; setCheckin(date, { evening: x.value }); },
-      }, moodFace(x.mood), h('span', { class: 'coach-mood-label' }, x.label))));
+      }, h('span', { class: 'coach-mood-face' }, moodFace(x.mood, 30)), h('span', { class: 'coach-mood-label' }, x.label))));
   } else if (o.moment === 'soir' && ans && eveningAnswered === date) {
     const r = eveningReply(ans, date, store.state);
     title = r.title;
     body = r.body;
     face = moodFace(EVENING.find((x) => x.value === ans)?.mood ?? 3, 40);
     after = eveningAfter(date, ans, o.rerender);
-  } else if (o.moment === 'matin' && mood !== undefined && morningAnswered === date && !journeyOn) {
+  } else if (o.moment === 'matin' && mood !== undefined && morningAnswered === date) {
     const r = morningReply(mood, date, store.state);
     title = r.title;
     body = r.body;
     face = moodFace(mood, 40);
-    after = h('button', { class: 'dc-link', type: 'button', onclick: () => { morningAnswered = null; setCheckin(date, { morningMood: undefined }); } }, 'Changer ma réponse');
+    after = h('div', { class: 'stack coach-needs' },
+      journeyNeedsInline(date, o.rerender ?? (() => {})),
+      h('button', { class: 'dc-link', style: 'align-self:flex-start', type: 'button', onclick: () => { morningAnswered = null; setCheckin(date, { morningMood: undefined }); } }, 'Changer ma réponse'));
   } else {
     const m = o.bilanShown && slot === 'bilan' ? coachMessages(date, store.state).soir : coachNow(date, store.state);
     title = m.title;
     body = m.body;
-    if (o.moment === 'matin' && isToday && hour < 12 && mood === undefined && !journeyOn) {
+    if (o.moment === 'matin' && isToday && hour < 12 && mood === undefined) {
       inline = h('div', { class: 'stack', style: 'gap:8px' },
         h('p', { class: 'dc-q' }, 'Comment tu te sens ce matin ?'),
         h('div', { class: 'coach-moods dc-moods', role: 'group', 'aria-label': 'Ton humeur ce matin' },
           MOOD_LABELS.map((label, i) => h('button', {
             class: 'coach-mood', type: 'button', 'aria-label': label,
             onclick: () => { morningAnswered = date; setCheckin(date, { morningMood: i + 1 }); },
-          }, moodFace(i + 1), h('span', { class: 'coach-mood-label' }, label)))),
+          }, h('span', { class: 'coach-mood-face' }, moodFace(i + 1, 30)), h('span', { class: 'coach-mood-label' }, label)))),
       );
-    } else if (o.moment === 'matin' && mood !== undefined && !journeyOn) {
+    } else if (o.moment === 'matin' && mood !== undefined) {
       after = h('button', { class: 'dc-link', type: 'button', onclick: () => { morningAnswered = null; setCheckin(date, { morningMood: undefined }); } },
         `Ton humeur : ${MOOD_LABELS[mood - 1] ?? ''} · changer`);
     } else if (o.moment === 'soir' && ans) {
@@ -148,17 +144,20 @@ export function coachDayCard(date: string = today(), o: CoachCardOpts = { moment
 
   const slips = day.slips ?? [];
   const last = slips[slips.length - 1];
+  // Long messages: 3 lines, then "Lire la suite".
+  const long = body.length > 150 && !bodyOpen.has(date);
   return h('section', { class: 'card ux coach-card dc-coach', 'aria-label': 'Le mot de ton coach' },
     eyebrow,
     h('div', { class: 'coach-head' },
-      face ?? iconCircle(SLOT_ICON[slot === 'bilan' ? 'soir' : slot], 'coach-ic'),
+      face,
       h('h3', { class: 'coach-title' }, title),
     ),
-    h('p', { class: 'coach-body' }, body),
+    h('p', { class: 'coach-body' + (long ? ' clamp' : '') }, body),
+    long ? h('button', { class: 'dc-link coach-more', type: 'button', onclick: () => { bodyOpen.add(date); o.rerender?.(); } }, 'Lire la suite') : null,
     o.extra ?? null,
+    o.bilan ?? null,
     inline,
     after,
-    h('p', { class: 'coach-sign' }, '— ton coach'),
     // After a "Dur" answer the reply already offers "J'ai craqué": no second button.
     o.moment === 'soir' && ans === 'dur' && eveningAnswered === date ? null : h('div', { class: 'coach-foot' },
       h('span', { class: 'small muted' }, last ? `Noté à ${last.time.replace(':', ' h ')}. On continue.` : 'Un moment difficile ?'),
@@ -221,21 +220,35 @@ export function bilanTime(date: string, hour: number = hourNow()): boolean {
   return (wd === 6 && hour >= 17) || wd === 0;
 }
 
-/** Weekly recap: wins first, one focus for next week. Sunday evening and Monday; null otherwise. */
-export function weeklyBilanCard(date: string = today()): HTMLElement | null {
+/** Weekly recap data for `date`, or null when it should not show (time, seen, nothing logged). */
+function bilanData(date: string) {
   if (date !== today() || !bilanTime(date)) return null;
   const r = weeklyReview(date, store.state);
   if (bilanHidden === r.start || bilanSeen() === r.start) return null;
   // Nothing at all logged that week (e.g. before the start): no bilan.
   const anything = r.sessionsDone + r.minutesMoved + r.daysWithMeals + r.habitsTotal + r.weighIns + r.slips +
     r.checkins.bien + r.checkins.moyen + r.checkins.dur > 0;
-  if (!anything) return null;
+  return anything ? r : null;
+}
 
+/** The weekly bilan in 2 lines + "Voir mon bilan", placed inside the coach card (Sunday evening, Monday). */
+export function weeklyBilanLines(date: string = today()): HTMLElement | null {
+  const r = bilanData(date);
+  if (!r) return null;
+  return h('div', { class: 'coach-bilan-inline' },
+    h('div', { class: 'eyebrow' }, `Ta semaine · ${fmtDayMonth(r.start)} → ${fmtDayMonth(r.end)}`),
+    h('p', null, h('strong', null, r.headline), ` ${r.wins[0] ? r.wins[0] + '.' : ''}`),
+    h('button', { class: 'dc-link', style: 'align-self:flex-start', type: 'button', onclick: () => openBilanSheet(date) }, 'Voir mon bilan'),
+  );
+}
+
+/** The full weekly bilan in a sheet: wins first, 3 figures, one focus for next week. */
+export function openBilanSheet(date: string = today()) {
+  const r = weeklyReview(date, store.state);
   const stat = (value: string, label: string) => h('div', { class: 'coach-stat' },
     h('span', { class: 'coach-stat-v num' }, value), h('span', { class: 'coach-stat-l' }, label));
-
-  return h('section', { class: 'card ux solo coach-bilan paper', 'aria-label': 'Bilan de la semaine' },
-    h('div', { class: 'eyebrow' }, `Ta semaine · ${fmtDayMonth(r.start)} → ${fmtDayMonth(r.end)}`),
+  const sheet = openSheet('Ta semaine', h('div', { class: 'stack coach-bilan' },
+    h('p', { class: 'italic muted' }, `${fmtDayMonth(r.start)} → ${fmtDayMonth(r.end)}`),
     h('h3', { class: 'coach-title' }, r.headline),
     h('ul', { class: 'coach-wins' },
       r.wins.slice(0, 4).map((w) => h('li', null,
@@ -251,11 +264,11 @@ export function weeklyBilanCard(date: string = today()): HTMLElement | null {
       h('p', { class: 'coach-focus-text' }, r.focus.charAt(0).toUpperCase() + r.focus.slice(1) + '.'),
       r.nextPhase ? h('p', { class: 'small' }, `Et la semaine prochaine, on passe en « ${r.nextPhase} ». Je t’explique tout lundi.`) : null,
     ),
-    h('button', { class: 'btn sm', style: 'align-self:center;margin-bottom:14px', type: 'button', onclick: () => {
+    h('button', { class: 'btn primary block', type: 'button', onclick: () => {
       bilanHidden = r.start;
       markBilanSeen(r.start);
-      const root = document.getElementById('screen');
-      root?.querySelector('.coach-bilan')?.remove();
+      sheet.close();
+      document.querySelector('.coach-bilan-inline')?.remove();
     } }, 'Merci, c’est noté'),
-  );
+  ));
 }

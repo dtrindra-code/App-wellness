@@ -1243,12 +1243,15 @@ export const CHECKPOINTS: Checkpoint[] = [
   {
     day: 0,
     title: 'Mon point de départ',
-    intro: 'Avant de commencer, une photo de là où tu es aujourd’hui. Rien à réussir : ces chiffres sont juste un repère, pour voir le chemin parcouru au jour 30 et au jour 60.',
+    intro: 'Chaque jour une graine, chaque semaine une pousse : 60 jours pour cultiver ton jardin intérieur. Avant de semer, une photo de là où tu es aujourd’hui. Rien à réussir, juste un repère pour voir ce qui aura poussé au jour 30 et au jour 60.',
     quote: { text: 'Tout voyage commence là où l’on est, pas là où l’on voudrait être.' },
     fields: [
       ...SCALES,
       WHEEL,
-      { kind: 'text', key: 'intention', label: 'Mon intention', q: 'Qu’est-ce que tu viens chercher dans ces 60 jours ?', chips: ['Souffler', 'Me retrouver', 'Moins d’anxiété', 'Poser mes limites', 'Retrouver de la joie'] },
+      { kind: 'text', key: 'hope', label: 'Ce que j’espère', q: 'Ce que j’espère trouver dans ces 60 jours…', chips: ['Du calme', 'Du temps pour moi', 'De l’énergie', 'De la joie'] },
+      { kind: 'text', key: 'leaveBehind', label: 'Ce que je laisse', q: 'Ce que je souhaite laisser derrière moi…', chips: ['La culpabilité', 'Le « je dois »', 'La fatigue de fond'] },
+      { kind: 'text', key: 'cultivate', label: 'Ce que je cultive', q: 'Ce que j’aimerais cultiver davantage…', chips: ['La douceur', 'Mes limites', 'Le plaisir', 'Le lien'] },
+      { kind: 'text', key: 'intention', label: 'Mon intention', q: 'Ma phrase d’intention pour ces 60 jours :' },
       { kind: 'values', key: 'values', label: 'Mes valeurs', q: 'Choisis les 3 valeurs qui comptent le plus pour toi aujourd’hui.', pick: 3 },
     ],
   },

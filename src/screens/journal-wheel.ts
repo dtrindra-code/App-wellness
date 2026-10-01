@@ -1,6 +1,6 @@
 // "Ma roue de la vie": 8 domains rated 0–10, drawn as a wheel of 8 wedges whose
 // filled radius is the score. Interactive (tap a wedge at the height you want, or
-// arrow keys on a focused wedge, or the 0–10 chips under it), and a compare mode
+// arrow keys on a focused wedge, or the 0–10 sliders under it), and a compare mode
 // (day 0 drawn as a dashed outline over today's fill). Works at 390 px.
 
 import { h, s } from '../lib/ui';
@@ -114,36 +114,58 @@ export function lifeWheelSvg(values: Vals, o: WheelOpts = {}): SVGSVGElement {
   return svg;
 }
 
-/** Editable wheel + one 0–10 chip row per domain (the accessible way). */
+/**
+ * Editable wheel + one 0–10 slider per domain (the accessible way). The rows are built
+ * once; a pick (slider, tap on the wheel, arrow keys on a wedge) only redraws the wheel
+ * and syncs the sliders, so a slider being dragged is never replaced.
+ */
 export function wheelEditor(initial: Vals, onChange: (next: Vals) => void, base?: Vals | null): HTMLElement {
   const values: Vals = { ...initial };
-  const wrap = h('div', { class: 'jw' });
-  const paint = () => {
-    const pick = (key: string, v: number) => { values[key] = v; onChange({ ...values }); paint(); };
-    const focused = document.activeElement?.getAttribute('data-jw') ?? null;
-    wrap.replaceChildren(
-      h('div', { class: 'jw-svg-wrap' }, lifeWheelSvg(values, { base, onPick: pick })),
-      ...(base ? [legend()] : []),
-      h('div', { class: 'jw-rows' }, LIFE_DOMAINS.map((d) => {
-        const v = values[d.key];
-        return h('div', { class: 'jw-row' },
-          h('div', { class: 'jw-row-head' },
-            h('span', { class: 'jw-row-label' }, d.label),
-            h('span', { class: 'jw-row-v num' }, typeof v === 'number' ? `${v}/10` : '–'),
-            typeof base?.[d.key] === 'number' ? h('span', { class: 'jw-row-base small muted' }, `départ ${base[d.key]}`) : null),
-          h('div', { class: 'jw-scale', role: 'radiogroup', 'aria-label': `${d.label}, de 0 à 10` },
-            Array.from({ length: 11 }, (_, k) => h('button', {
-              class: 'jw-n num' + (v === k ? ' on' : ''), type: 'button', role: 'radio',
-              'aria-checked': v === k ? 'true' : 'false', 'aria-label': `${k}`, 'data-jw': `${d.key}-${k}`,
-              onclick: () => pick(d.key, k),
-            }, String(k)))),
-        );
-      })),
-    );
-    if (focused) (wrap.querySelector(`[data-jw="${focused}"]`) as HTMLElement | SVGElement | null)?.focus();
+  const svgWrap = h('div', { class: 'jw-svg-wrap' });
+  const ranges = new Map<string, { input: HTMLInputElement; out: HTMLElement }>();
+
+  const sync = (key: string) => {
+    const r = ranges.get(key);
+    if (!r) return;
+    const v = values[key];
+    const set = typeof v === 'number';
+    if (set && document.activeElement !== r.input) r.input.value = String(v);
+    r.input.classList.toggle('unset', !set);
+    r.input.setAttribute('aria-valuetext', set ? `${v} sur 10` : 'pas encore noté');
+    r.out.textContent = set ? String(v) : '–';
   };
-  paint();
-  return wrap;
+  const drawSvg = () => {
+    const focused = document.activeElement?.getAttribute('data-jw') ?? null;
+    svgWrap.replaceChildren(lifeWheelSvg(values, { base, onPick: (key, v) => { pick(key, v); } }));
+    if (focused && focused.startsWith('w-')) (svgWrap.querySelector(`[data-jw="${focused}"]`) as SVGElement | null)?.focus();
+  };
+  const pick = (key: string, v: number, save = true) => {
+    values[key] = v;
+    sync(key);
+    drawSvg();
+    if (save) onChange({ ...values });
+  };
+
+  const rows = LIFE_DOMAINS.map((d) => {
+    const v = values[d.key];
+    const out = h('output', { class: 'jw-row-v num' }, typeof v === 'number' ? String(v) : '–');
+    const input = h('input', {
+      class: 'jw-range' + (typeof v === 'number' ? '' : ' unset'), type: 'range', min: 0, max: 10, step: 1,
+      value: String(typeof v === 'number' ? v : 5), 'aria-label': `${d.label}, de 0 à 10`,
+      'aria-valuetext': typeof v === 'number' ? `${v} sur 10` : 'pas encore noté',
+      oninput: () => pick(d.key, Number(input.value), false),
+      onchange: () => pick(d.key, Number(input.value)),
+    });
+    ranges.set(d.key, { input, out });
+    return h('div', { class: 'jw-row' },
+      h('div', { class: 'jw-row-head' },
+        h('span', { class: 'jw-row-label' }, d.label),
+        typeof base?.[d.key] === 'number' ? h('span', { class: 'jw-row-base' }, `départ ${base[d.key]}`) : null,
+        out),
+      input);
+  });
+  drawSvg();
+  return h('div', { class: 'jw' }, svgWrap, base ? legend() : null, h('div', { class: 'jw-rows' }, rows));
 }
 
 function legend(): HTMLElement {
