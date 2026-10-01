@@ -6,6 +6,7 @@ import { store } from '../store';
 import { h, field, openSheet, parseNum, segmented, fmtKg } from '../lib/ui';
 import { addDays, daysBetween, today } from '../lib/dates';
 import { DEFAULT_CYCLE, PREGNANCY_NOTE, cycleSettings, periodStarts } from '../lib/cycle';
+import { planSettings } from '../data/plan';
 
 const DAY_LABELS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
 
@@ -89,6 +90,10 @@ function openForm(mode: 'welcome' | 'profile'): void {
   const prepStart = date(p.prepStart);
   const raceDate = date(p.raceDate);
   const raceName = h('input', { type: 'text', value: p.raceName });
+  const ps = planSettings(p);
+  const runBase = num(ps.runBaseMin, '30', false);
+  runBase.setAttribute('aria-label', 'Minutes de course facile en continu');
+  const perWeek = num(ps.sessionsPerWeek, '3', false);
 
   // Cycle inputs.
   const starts = periodStarts(store.state.days);
@@ -184,6 +189,10 @@ function openForm(mode: 'welcome' | 'profile'): void {
       return void (error.textContent = 'La durée du cycle semble inhabituelle, vérifie-la (souvent entre 21 et 35 j).');
     }
     if (lastPeriod.value && lastPeriod.value > t) return void (error.textContent = 'La date des dernières règles est dans le futur.');
+    const rb = parseNum(runBase.value);
+    const pw = parseNum(perWeek.value);
+    if (rb !== undefined && (rb < 10 || rb > 90)) return void (error.textContent = 'Course facile : indique entre 10 et 90 min.');
+    if (pw !== undefined && (pw < 1 || pw > 7)) return void (error.textContent = 'Séances par semaine : entre 1 et 7.');
 
     const cycle: CycleSettings = {
       ...DEFAULT_CYCLE,
@@ -207,6 +216,8 @@ function openForm(mode: 'welcome' | 'profile'): void {
       goalDate: goalDate.value,
       activity: Number(activity),
       basketDays: [...basket].sort((x, y) => x - y),
+      runBaseMin: rb === undefined ? ps.runBaseMin : Math.round(rb),
+      sessionsPerWeek: pw === undefined ? ps.sessionsPerWeek : Math.round(pw),
       cycle,
       onboarded: true,
     };
@@ -265,6 +276,14 @@ function openForm(mode: 'welcome' | 'profile'): void {
     h('div', { class: 'field' },
       h('span', { class: 'field-label' }, 'Jours de basket'),
       daysSlot,
+    ),
+    h('div', { class: 'stack' },
+      h('div', { class: 'field' },
+        h('span', { class: 'field-label' }, 'Course facile'),
+        h('div', { class: 'ob-inline' }, h('span', null, 'Tu cours facilement'), runBase, h('span', null, 'min')),
+        h('span', { class: 'field-hint' }, 'En continu, allure où tu peux parler. Le plan part de là.'),
+      ),
+      field('Séances de sport par semaine', perWeek, 'En plus du basket. Pendant la prépa half, on monte à 5.'),
     ),
     h('div', { class: 'field' },
       h('span', { class: 'field-label' }, 'Activité hors sport'),

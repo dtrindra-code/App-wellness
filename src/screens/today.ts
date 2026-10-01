@@ -400,6 +400,7 @@ function sessionBlock(date: string, s: PlannedSession, workouts: Workout[], ctx:
         ),
       ),
     ),
+    s.why ? h('p', { class: 'small muted' }, s.why) : null,
     note ? h('p', { class: 'small td-note' }, note) : null,
     open && s.mini
       ? h('div', { class: 'td-mini-box' },

@@ -9,10 +9,9 @@ import {
   sectionTitle, infoRow, disclosure, keyBubble, ICON,
 } from '../lib/ui';
 import type { Sheet } from '../lib/ui';
-import { addDays, dayShort, fmtDayMonth, fmtShort, mondayOf, range, today, weekday } from '../lib/dates';
-import { adaptSession, blockOn, cycleForecast, goodDays, season, sessionCapOn, weekOf } from '../data/plan';
+import { addDays, fmtDayMonth, fmtShort, mondayOf, range, today } from '../lib/dates';
+import { PHASE_SHORT, adaptSession, blockOn, planDay, season, sessionCapOn, weekOf, weekSummary } from '../data/plan';
 import { phaseLabel } from '../lib/cycle';
-import type { CyclePhase } from '../lib/cycle';
 
 // ---------- transient UI state ----------
 let weekOffset = 0;
@@ -27,18 +26,11 @@ const WITH_DISTANCE: Sport[] = ['swim', 'bike', 'run', 'walk'];
 
 interface LoggedWorkout { date: string; w: Workout }
 
-const PHASE_TAG: Record<CyclePhase, string> = {
-  regles: 'R', folliculaire: 'F', fertile: 'O', luteale: 'L', premenstruel: 'P', retard: 'R?',
-};
-
 /** Session adapted to the cycle cap of its day, with the note if lowered. */
 function adapted(s: PlannedSession): { session: PlannedSession; note?: string } {
   const { cap, reason } = sessionCapOn(s.date, store.profile, store.state.days);
   return adaptSession(s, cap, reason);
 }
-
-/** "mer., jeu." */
-const listDays = (ds: string[]) => ds.map((d) => `${dayShort(d)}.`).join(', ');
 
 function workoutsBetween(from: string, to: string): LoggedWorkout[] {
   const out: LoggedWorkout[] = [];
@@ -93,7 +85,7 @@ function header(t: string): HTMLElement {
   if (t < p.startDate) eyebrow = `Départ le ${fmtDayMonth(p.startDate)}`;
   else if (t > p.raceDate) eyebrow = 'Après la course';
   else {
-    const w = weekOf(t, p);
+    const w = weekOf(t, p, store.state.days);
     const b = blockOn(t, p);
     eyebrow = [w ? `Semaine ${w.index}` : null, b?.name].filter(Boolean).join(' · ');
   }
@@ -107,7 +99,8 @@ function header(t: string): HTMLElement {
 function weekCard(mon: string, t: string): HTMLElement {
   const p = store.profile;
   const sun = addDays(mon, 6);
-  const week = weekOf(mon, p);
+  const days = store.state.days;
+  const week = weekOf(mon, p, days);
   const block = blockOn(mon < p.startDate ? p.startDate : mon, p) ?? blockOn(sun, p);
   const planned = week?.sessions ?? [];
   const logged = workoutsBetween(mon, sun);
@@ -159,11 +152,11 @@ function weekCard(mon: string, t: string): HTMLElement {
 
   const represented = new Set<LoggedWorkout>();
   for (const s of planned) { const l = byPlan.get(s.id); if (l) represented.add(l); }
-  const good = new Set(goodDays(mon, p, store.state.days));
-  if (good.size && (planned.length || mon >= mondayOf(t))) {
-    card.append(h('p', { class: 'small sp-good-hint' },
-      `Tes bons jours cette semaine : ${listDays([...good])}. Place-y la séance la plus longue.`,
-      h('span', { class: 'muted' }, ' Estimation selon ton cycle.')));
+  if (week && planned.length) {
+    const cycleKnown = range(mon, sun).some((d) => planDay(d, p, days).phase);
+    card.append(h('p', { class: 'small sp-summary' },
+      `${label} : ${weekSummary(week, p, days)}`,
+      cycleKnown ? h('span', { class: 'muted' }, ' · phases estimées') : null));
   }
   const list = h('div', { class: 'sp-days' });
   for (const date of range(mon, sun)) {
@@ -171,15 +164,14 @@ function weekCard(mon: string, t: string): HTMLElement {
     for (const s of planned.filter((x) => x.date === date)) items.push(plannedRow(s, byPlan.get(s.id)));
     for (const l of logged) if (l.date === date && !represented.has(l)) items.push(workoutRow(l));
     const isToday = date === t;
-    const dayLabel = h('div', { class: 'sp-day' + (isToday ? ' today' : '') }, isToday ? `Aujourd’hui · ${fmtShort(date)}` : fmtShort(date));
-    const info = cycleForecast(date, p, store.state.days);
-    if (info) {
-      dayLabel.append(h('span', { class: 'sp-phase', title: phaseLabel(info.phase), 'aria-label': phaseLabel(info.phase) }, PHASE_TAG[info.phase]));
+    const dayLabel = h('div', { class: 'sp-day' + (isToday ? ' today' : '') }, h('span', null, isToday ? `Aujourd’hui · ${fmtShort(date)}` : fmtShort(date)));
+    const pd = planDay(date, p, days);
+    if (pd.phase) {
+      dayLabel.append(h('span', { class: 'sp-phase sp-ph-' + pd.phase, title: phaseLabel(pd.phase), 'aria-label': phaseLabel(pd.phase) }, PHASE_SHORT[pd.phase]));
     }
-    if (good.has(date)) dayLabel.append(h('span', { class: 'sp-good' }, 'bon jour'));
+    if (pd.noSwim) dayLabel.append(h('span', { class: 'sp-noswim', title: 'Pas de piscine autour des règles' }, 'piscine off'));
+    if (pd.basket || !items.length) dayLabel.append(h('span', { class: 'sp-rest' }, pd.basket ? 'basket' : 'repos'));
     if (!items.length) {
-      const basket = p.basketDays.includes(weekday(date)) && date >= p.startDate;
-      dayLabel.append(h('span', { class: 'sp-rest' }, basket ? ' · basket' : ' · repos'));
       list.append(dayLabel);
     } else {
       list.append(dayLabel, ...items);
@@ -196,7 +188,7 @@ function plannedRow(orig: PlannedSession, done: LoggedWorkout | undefined): HTML
   const { session: s, note } = adapted(orig);
   const sub = done
     ? done.w.mini ? `Version mini faite · ${fmtMin(done.w.minutes)}` : `Faite · ${fmtMin(done.w.minutes)}`
-    : `${fmtMin(s.minutes)} · ${s.intensity}${s.optional ? ' · optionnelle' : ''}`;
+    : `${fmtMin(s.minutes)} · ${s.intensity}${s.key ? ' · séance clé' : ''}${s.optional ? ' · optionnelle' : ''}`;
   return infoRow({
     icon: SPORT_GLYPH[s.sport] ?? '··',
     title: s.title,
@@ -234,9 +226,11 @@ function openSessionSheet(orig: PlannedSession) {
     h('div', { class: 'row wrap', style: 'gap:6px' },
       h('span', { class: 'chip num' }, fmtMin(s.minutes)),
       intensityChip(s),
+      s.key ? h('span', { class: 'chip accent' }, 'séance clé') : null,
       s.optional ? h('span', { class: 'chip' }, 'optionnelle') : null,
       h('span', { class: 'small muted' }, `${SPORT_LABEL[s.sport] ?? ''} · ${fmtShort(s.date)}`),
     ),
+    s.why ? h('p', { class: 'small sp-why' }, s.why) : null,
     h('p', null, s.details),
     note ? h('p', { class: 'small sp-note' }, note) : null,
     s.mini

@@ -56,3 +56,41 @@ Notifications are done with an **iOS Shortcuts personal automation** (documented
 
 ## V6 additions
 - **Automatic encrypted backup** (`src/lib/sync.ts`, Plus → Tes données): deleting the home-screen app wipes localStorage, so data can be pushed automatically (4 s debounce + when the app goes to the background) to a **secret gist on the user's own GitHub account**, using a token she creates (Gists read/write only). The data is encrypted on the phone (PBKDF2-SHA256 310 000 iterations → AES-GCM 256, fresh IV per upload); GitHub only stores ciphertext. Token and derived key stay in this browser's localStorage (never the password, never logged). Restore on a new install needs the token + backup password. If a newer backup from another device exists, auto-upload pauses and Plus offers "Restaurer". Manual export/import remains as a fallback; Today and Plus nudge weekly while the backup is off and no export was made.
+
+## V7 — Progrès
+- The "Poids" tab becomes **Progrès** (label only: the TabId stays `'weight'`, so navigation and the saved tab keep working): the overall follow-up, keeping everything the weight screen did (chart, palier / final goal, pace, composition and history, now folded).
+- Period switch **Semaine / Mois / Depuis le début** (current Mon → today, 1st of the month → today, since `profile.startDate`). Week and month are compared with the same elapsed days of the previous week / month; no comparison chip when the previous period has no data for that card.
+- `src/lib/stats.ts` (pure): weight (7-day average at start/end, delta, vs palier / final goal), nutrition (days logged, average kcal vs budget incl. sport bonus and cycle adjust, protein, days within budget, slips and top triggers), sport (sessions vs planned, minis, basket, minutes per sport, running totals and longest run), équilibre (pillars, sleep, nights < 6 h, stress, Body Battery, breathing), cycle per phase (weight vs the cycle's mean, energy, sessions, slips). Missing data is `null`, never 0 or NaN.
+- Sections: LE MOT DU COACH (3 lines: biggest win, one honest observation, one focus; no weight-loss talk in pregnancy mode) · TON POIDS · TON ASSIETTE · TON SPORT · TON ÉQUILIBRE · TON CYCLE (key bubble, 2–3 info rows, chips, details and small bar charts in disclosures; friendly empty states).
+
+## V7 — plan sportif (`src/data/plan.ts`)
+The plan is regenerated from the profile **and the logged cycle** (period starts, flow days, positive LH tests), deterministic and memoized on those inputs plus today's date. Logging a new period recomputes it. Checked by `node scripts/check-plan.mjs` (fictional profiles only).
+
+**Settings** (optional `Profile` fields, defaults in `PLAN_DEFAULTS`): `noSwimBefore` (3) / `noSwimAfter` (2) — Plus → Ton cycle ("Pas de piscine : X j avant, pendant, Y j après"); `runBaseMin` (30, "Tu cours facilement … min") and `sessionsPerWeek` (3, on top of basketball) — Profil. Basketball days come only from `profile.basketDays` (none when empty).
+
+**1. Cycle first.** Phases come from the cycle forecast (`cycleModel`/`positionOn`: logged cycles, then cycles projected with the average length; also projected backwards before the first logged period). A period is at least `periodLength` days, longer when more flow days were logged (projected periods use the logged average).
+| Phase | What the plan puts there |
+|---|---|
+| Règles | gentle only: very easy bike (≤ 40 min), walk (replaces the run), mobility (replaces strength or the swim). No intensity, no key session. |
+| Folliculaire / fenêtre fertile | the week's **key session** (the run: longest run of the week, strides, then light tempo). Strength preferred here. |
+| Lutéale | easy/moderate endurance, strength OK, no hard intensity. TTC: "période d'attente", moderate, drink, avoid overheating. |
+| Prémenstruel (last 5 days) | easy and shorter (×0.8), mini welcome, strength 20 min. |
+| Retard | easy/moderate only, no swim (the period can come any day). |
+| Grossesse | no cycle windows, everything ≤ modéré, no running intensity, no key session, every "why" says "à valider avec ta sage-femme". |
+Every session carries a `why` line tied to its day ("Phase folliculaire : énergie haute, c'est ta séance clé de la semaine.") and, when the plan changed something, a `note`.
+
+**2. No swimming near periods.** No swim from `noSwimBefore` days before each period start (logged or projected), during it, until `noSwimAfter` days after it ends, on any logged bleeding day (+ `noSwimAfter`) and while late. A swim is moved to another allowed day of the week ("Piscine décalée…") or replaced by an easy outdoor ride (weekend) or stretching (weekday): "Pas de piscine autour des règles : on la remplace par…". On holiday, sea swimming follows the same window. Race day is fixed: it only gets a gentle note if it falls in the window.
+
+**3. Strength ≤ 30 min** (20–30), functional for triathlon (squats, lunges, glute bridge, planks, back/shoulders with a band for swimming, calves/ankles for running), two alternating circuits with reps. With 3 sessions a week it is an optional add-on attached to the run (or swim) day; from 4 sessions it is one of them. One optional stretching moment per week (after basketball, on a period day or the day after basketball).
+
+**4. Running**: continuous from the first week (no run-walk), starting at `runBaseMin` in Z2. The level grows ≤ 8 %/week, only after a normal week that really had a run; every 4th week is lighter (×0.8). Strides then light tempo only in the follicular/fertile phase, on a day that is neither a basket day nor the day after; the long run goes on the weekend when a free weekend day allows it.
+
+**5. Volume & basketball**: exactly `sessionsPerWeek` non-optional sessions per full pré-prépa week (fewer in partial weeks), at most one per day except strength attached to a run/swim. No hard session (soutenu or key) on a basket day or the day after; the day after basketball gets easy sessions or rest/mobility. Placement is a small cost search per week (constraints above are hard rules; preferences: bike Saturday, swim Monday/Wednesday, key run Tuesday/Wednesday or Sunday, spacing).
+
+**6. Bike**: outdoor road rides only (no home trainer), Saturday first, 45 min growing ~10 %/week to ~1 h 30 in December (then up to 3 h in the half prep). Mini for bad weather: 30 min brisk walk or 15 min stretching.
+
+**7.** Every session has a "version mini" (~15 min); the mini counts as done.
+
+**8. Blocks**: Reprise (first 3 weeks = lavage) → Fondations → Consolidation → Maldives (everything optional: sea swim outside the window, walks, mobility; basketball paused on holiday) → half prep Base → Construction → Spécifique → Affûtage → Course, with the same rules; `sessionsPerWeek` grows to 4 then 5 in the prep (never below the setting; doubles allowed there, never two hard sessions or the same sport on a day).
+
+**9.** Ids are `${date}-${sport}`, unique per day. Screens: Sport shows per day the phase tag (estimate), a "piscine off" marker, basket/rest, a one-line week summary ("Cette semaine : 3 séances + basket · séance clé mardi (fenêtre fertile)"), and the `why` line in the session sheet (also on Today).

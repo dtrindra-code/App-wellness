@@ -28,7 +28,7 @@ const icon = (d: string) =>
 
 const TABS: { id: TabId; label: string; icon: string }[] = [
   { id: 'today', label: 'Aujourd’hui', icon: 'M12 3v2|M12 19v2|M3 12h2|M19 12h2|M12 8a4 4 0 1 0 0 8a4 4 0 1 0 0-8' },
-  { id: 'weight', label: 'Poids', icon: 'M4 19h16|M5 15l4-4 3 3 7-7|M15 7h4v4' },
+  { id: 'weight', label: 'Progrès', icon: 'M4 19h16|M5 15l4-4 3 3 7-7|M15 7h4v4' },
   { id: 'food', label: 'Repas', icon: 'M7 3v8a2 2 0 0 0 4 0V3|M9 11v10|M17 3c-2 2-2 6 0 8v10' },
   { id: 'training', label: 'Sport', icon: 'M4 17c3-6 5-6 8 0s5 6 8 0|M4 9c3-6 5-6 8 0s5 6 8 0' },
   { id: 'balance', label: 'Équilibre', icon: 'M12 21c-5-3-8-6.5-8-10.5A4.5 4.5 0 0 1 12 7a4.5 4.5 0 0 1 8 3.5c0 4-3 7.5-8 10.5' },

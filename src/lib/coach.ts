@@ -849,7 +849,7 @@ export function weeklyReview(date: string, state: AppState): WeeklyReview {
   const sleeps: number[] = [];
   for (let d = start; d <= last; d = addDays(d, 1)) {
     const day = days[d];
-    const planned = sessionsOn(d, p).filter((x) => !x.optional);
+    const planned = sessionsOn(d, p, days).filter((x) => !x.optional);
     sessionsPlanned += planned.length;
     if (!day) continue;
     sessionsDone += planned.filter((x) => day.workouts.some((w) => w.plannedId === x.id)).length;
