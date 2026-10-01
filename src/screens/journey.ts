@@ -12,20 +12,20 @@ import { addDays, fmtDayMonth, fmtShort, today } from '../lib/dates';
 import {
   JOURNEY_DAYS, CHAPTER_DAYS, JOKERS_PER_WEEK, MAX_NEEDS,
   journeyOf, journeyStatus, journeyDay, chapterOf, dayInChapter, chapterInfo, rulesOn, ruleDef, ruleDone, autoDone,
-  dayScore, jokersLeft, setJoker, toggleRule, energyOf, setEnergy, toggleNeed, promptOn, saveAnswer,
-  startJourney, changeRules, stopJourney, chapterRecap, besoinDe, journeyStats,
+  dayScore, jokersLeft, setJoker, toggleRule, energyOf, setEnergy, toggleNeed,
+  startJourney, changeRules, stopJourney, chapterRecap, besoinDe, journeyStats, emotionLabel, checkpointOnDay,
 } from '../lib/journey';
 import type { ChapterRecap } from '../lib/journey';
 import { DEFAULT_RULES, NEEDS, RULES } from '../data/journey';
 import type { NeedKey } from '../data/journey';
 import { markDone, popCls } from './today-shared';
+import { emotionPicker } from './journal-emotions';
+import { journeyPageCard } from './journal-page';
+import { checkpointCard, baselineInvite, openCheckpoint } from './journal-checkpoints';
+import { openChapterOpening, quotePage } from './journal-science';
 
 // ---------- transient UI state ----------
 const INVITE_KEY = 'cap-maldives:journey-invite';
-/** Journal drafts by date (chips + text), kept across re-renders. */
-const drafts = new Map<string, { chips: Set<string>; text: string }>();
-/** Dates whose answer is being edited again. */
-const editing = new Set<string>();
 /** Dates whose check-in is open (being answered or changed): it folds on « C’est noté ». */
 const checkinEdit = new Set<string>();
 
@@ -103,7 +103,8 @@ export function openJourneyStart() {
     h('ul', { class: 'jr-lines' },
       h('li', null, 'Chaque matin : ton énergie et ton besoin du jour, en 30 secondes.'),
       h('li', null, 'Dans la journée : 5 petits engagements doux. 4 sur 5, c’est une journée réussie.'),
-      h('li', null, 'Le soir : une question pour toi. Tu réponds en un tap, ou tu passes.'),
+      h('li', null, 'Le soir : ta page du jour, 2 ou 3 questions courtes. Quelques mots suffisent, ou tu passes.'),
+      h('li', null, 'Avant de commencer : ton point de départ (ta roue de vie, ton intention). On le revoit au jour 30 et au jour 60.'),
     ),
     h('p', { class: 'small muted' }, `4 chapitres de ${CHAPTER_DAYS} jours. ${JOKERS_PER_WEEK} jokers par semaine, et un jour raté ne remet jamais rien à zéro.`),
     h('h3', null, 'Tes 5 engagements'),
@@ -117,6 +118,8 @@ export function openJourneyStart() {
         startJourney(d, rules);
         sheet.close();
         toast(d === today() ? 'C’est parti, jour 1 aujourd’hui' : `Rendez-vous le ${fmtDayMonth(d)}`);
+        // Day 0: the baseline (scales, life wheel, intention, values), right after.
+        setTimeout(() => openCheckpoint('0'), 260);
       },
     }, 'Je commence'),
   );
@@ -167,6 +170,7 @@ export function journeyMorningCard(date: string, rerender: () => void): HTMLElem
     return h('section', { class: 'card ux solo jr-card' },
       h('span', { class: 'eyebrow' }, 'Revenir à moi'),
       h('p', { class: 'small' }, j.startDate === addDays(date, 1) ? 'Ça commence demain. Rien à préparer : je te guide.' : `Ça commence le ${fmtDayMonth(j.startDate)}.`),
+      baselineInvite(),
     );
   }
   const n = journeyDay(date, p);
@@ -183,24 +187,28 @@ export function journeyMorningCard(date: string, rerender: () => void): HTMLElem
     h('span', { class: 'eyebrow' }, dayEyebrow(n)),
   );
   if (dic === 1) {
-    card.append(h('div', { class: 'jr-intro paper' },
+    card.append(h('div', { class: 'jr-intro' },
       h('span', { class: 'eyebrow' }, `Chapitre ${ch.index}`),
       h('h3', { class: 'jr-title' }, ch.title),
       ch.subtitle ? h('p', { class: 'italic jr-sub' }, ch.subtitle) : null,
+      quotePage(ch.quote),
       h('p', { class: 'small' }, ch.intro),
+      h('button', { class: 'dc-link', style: 'align-self:flex-start', type: 'button', onclick: () => openChapterOpening(ch.index) }, `Lire « ${ch.understand.title} » ›`),
     ));
   } else {
     card.append(h('div', { class: 'jr-chap-line' },
       h('span', { class: 'jr-chap-name' }, ch.title),
       h('span', { class: 'small muted num' }, `jour ${dic}/${CHAPTER_DAYS}`)));
   }
+  const invite = baselineInvite();
+  if (invite) card.append(invite);
 
   if (answered) {
     card.append(h('div', { class: 'jr-ci-done' },
       iconCircle(ICON.heart),
       h('span', { class: 'jr-ci-text' },
         h('span', { class: 'info-title' }, `Énergie ${ENERGY_LABELS[(energy as number) - 1].toLowerCase()}`),
-        h('span', { class: 'info-detail' }, needs.map((k) => besoinDe(k)).join(' · '))),
+        h('span', { class: 'info-detail' }, [...needs.map((k) => besoinDe(k)), emotionLabel(day.journey?.emotion)?.toLocaleLowerCase('fr-FR')].filter(Boolean).join(' · '))),
       h('button', { class: 'dc-link', type: 'button', onclick: () => { checkinEdit.add(date); rerender(); } }, 'Changer'),
     ));
     return card;
@@ -230,6 +238,8 @@ export function journeyMorningCard(date: string, rerender: () => void): HTMLElem
           },
         }, on ? check() : null, x.label);
       })),
+    h('p', { class: 'dc-q' }, 'Et ton émotion ? ', h('span', { class: 'small muted' }, 'facultatif')),
+    emotionPicker(date, () => { checkinEdit.add(date); }),
     checkinEdit.has(date) && energy !== undefined && needs.length
       ? h('button', { class: 'dc-link', style: 'align-self:flex-end', type: 'button', onclick: () => { checkinEdit.delete(date); rerender(); } }, 'C’est noté')
       : null,
@@ -297,79 +307,14 @@ export function journeyRulesCard(date: string): HTMLElement | null {
   );
 }
 
-// ---------- journal prompt ----------
+// ---------- journal page ----------
 
-function draftFor(date: string) {
-  let d = drafts.get(date);
-  if (!d) {
-    const a = store.getDay(date).journey?.answer;
-    d = { chips: new Set(a && !a.skipped ? a.chips : []), text: a?.text ?? '' };
-    drafts.set(date, d);
-  }
-  return d;
-}
-
-/** CE SOIR: the question of the day (chips + optional text + Passer). */
+/** CE SOIR: the page of the day (journal-page), or the checkpoint on day 30 / 60. */
 export function journeyPromptCard(date: string, rerender: () => void): HTMLElement | null {
-  const pr = promptOn(date);
-  if (!pr) return null;
-  const a = store.getDay(date).journey?.answer;
-  const head = [
-    h('span', { class: 'eyebrow' }, `Ta page du jour · Jour ${pr.day}`),
-    h('h3', { class: 'jr-title' }, pr.title),
-  ];
-
-  if (a && !editing.has(date)) {
-    if (a.skipped) {
-      return h('section', { class: 'card ux solo jr-card jr-prompt' }, ...head,
-        h('p', { class: 'small muted' }, 'Passée aujourd’hui. C’est ok, la question t’attendra.'),
-        h('button', { class: 'dc-link', style: 'align-self:flex-start', type: 'button', onclick: () => { editing.add(date); drafts.delete(date); rerender(); } }, 'Y répondre quand même'),
-      );
-    }
-    return h('section', { class: 'card ux solo jr-card jr-prompt done' }, ...head,
-      h('p', { class: 'jr-q' }, pr.question),
-      a.chips.length ? h('div', { class: 'jr-chips' }, a.chips.map((c) => h('span', { class: 'jr-chip on static' }, c))) : null,
-      a.text ? h('p', { class: 'jr-answer' }, a.text) : null,
-      h('div', { class: 'row between' },
-        h('span', { class: 'small muted' }, 'Gardé sur ton téléphone.'),
-        h('button', { class: 'dc-link', type: 'button', onclick: () => { editing.add(date); drafts.delete(date); rerender(); } }, 'Modifier')),
-    );
-  }
-
-  const d = draftFor(date);
-  const chipsWrap = h('div', { class: 'jr-chips', role: 'group', 'aria-label': 'Réponses rapides' });
-  const paintChips = () => chipsWrap.replaceChildren(...pr.chips.map((c) => {
-    const on = d.chips.has(c);
-    return h('button', {
-      class: 'jr-chip' + (on ? ' on' : ''), type: 'button', 'aria-pressed': on ? 'true' : 'false',
-      onclick: () => { if (on) d.chips.delete(c); else d.chips.add(c); paintChips(); },
-    }, on ? check() : null, c);
-  }));
-  paintChips();
-  const ta = h('textarea', {
-    class: 'input jr-text', rows: 3, placeholder: 'Si tu veux, quelques mots…', 'aria-label': pr.question,
-    value: d.text, oninput: (e: Event) => { d.text = (e.target as HTMLTextAreaElement).value; },
-  });
-  const save = () => {
-    const text = d.text.trim();
-    if (!d.chips.size && !text) { toast('Choisis une réponse ou écris un mot. Ou passe, c’est ok.'); return; }
-    editing.delete(date);
-    drafts.delete(date);
-    saveAnswer(date, { chips: [...d.chips], ...(text ? { text } : {}) });
-    toast('C’est écrit. Merci pour toi.');
-  };
-  const skip = () => { editing.delete(date); drafts.delete(date); saveAnswer(date, { chips: [], skipped: true }); };
-
-  return h('section', { class: 'card ux solo jr-card jr-prompt' }, ...head,
-    h('p', { class: 'jr-q' }, pr.question),
-    chipsWrap,
-    disclosure('Écrire quelques mots (facultatif)', () => ta, `jr-ta-${date}`, 'Replier'),
-    pr.tip ? h('p', { class: 'small muted jr-tip' }, pr.tip) : null,
-    h('div', { class: 'jr-actions' },
-      h('button', { class: 'btn primary', type: 'button', onclick: save }, 'Enregistrer'),
-      h('button', { class: 'btn ghost', type: 'button', onclick: skip }, 'Passer'),
-    ),
-  );
+  const n = journeyDay(date);
+  if (n === null) return null;
+  if (checkpointOnDay(n)) return checkpointCard(date);
+  return journeyPageCard(date, rerender);
 }
 
 // ---------- chapter recap ----------
@@ -401,13 +346,14 @@ export function recapBody(r: ChapterRecap): HTMLElement {
   );
 }
 
-export function entryView(e: { day: number; date: string; title: string; question: string; chips: string[]; text?: string }): HTMLElement {
-  return h('article', { class: 'jr-entry' },
+export function entryView(e: { day: number; date: string; title: string; question: string; chips: string[]; text?: string; qa?: { q: string; a: string }[] }): HTMLElement {
+  const qa = e.qa ?? (e.text ? [{ q: e.question, a: e.text }] : []);
+  return h('article', { class: 'jr-entry lined' },
     h('div', { class: 'jr-entry-head' },
-      h('span', { class: 'eyebrow' }, `Jour ${e.day} · ${fmtShort(e.date)}`)),
-    h('p', { class: 'jr-entry-q' }, e.question),
-    e.chips.length ? h('p', { class: 'small' }, e.chips.join(' · ')) : null,
-    e.text ? h('p', { class: 'jr-answer' }, e.text) : null,
+      h('span', { class: 'eyebrow' }, `Jour ${e.day} · ${fmtShort(e.date)}`),
+      h('span', { class: 'jr-entry-title' }, e.title)),
+    e.chips.length ? h('p', { class: 'small' }, h('span', { class: 'jr-entry-q' }, e.question), h('br', null), e.chips.join(' · ')) : null,
+    qa.map((x) => [h('p', { class: 'jr-entry-q' }, x.q), h('p', { class: 'jr-answer' }, x.a)]),
   );
 }
 

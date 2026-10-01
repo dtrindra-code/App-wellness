@@ -11,6 +11,9 @@ import {
 } from '../lib/journey';
 import { openJourneyStart, openJournalSheet, openRulesSheet } from './journey';
 import { openSundayReset } from './sunday-reset';
+import { checkpointDone, wheelsNowAndStart } from '../lib/journey';
+import { openCheckpoint, openJourneyRecap, openWheelSheet } from './journal-checkpoints';
+import { openRereadSheet, openScienceSheet } from './journal-science';
 
 export function journeySection(date: string = today()): HTMLElement[] {
   return [sectionTitle('Revenir à moi'), journeyCard(date)];
@@ -35,6 +38,7 @@ function journeyCard(date: string): HTMLElement {
         h('li', null, 'Une question pour toi le soir, et un reset le dimanche.'),
       ),
       h('button', { class: 'btn primary block bal-big', type: 'button', onclick: () => openJourneyStart() }, 'Découvrir le parcours'),
+      infoRow({ icon: ICON.leaf, title: 'Ce que disent les études', detail: 'Pourquoi écrire quelques minutes fait du bien', onClick: () => openScienceSheet() }),
     );
   }
 
@@ -50,7 +54,9 @@ function journeyCard(date: string): HTMLElement {
     return h('section', { class: 'card ux solo jr-card' },
       h('span', { class: 'eyebrow' }, 'Revenir à moi'),
       h('p', { class: 'small' }, `Ton parcours commence le ${fmtDayMonth(j.startDate)}. Jusque-là, rien à faire.`),
+      baselineRow(),
       rulesRow,
+      readingRows(),
     );
   }
 
@@ -71,16 +77,47 @@ function journeyCard(date: string): HTMLElement {
     st !== 'done' ? bar(s.dayInChapter / CHAPTER_DAYS) : null,
     h('div', { class: 'coach-stats' },
       stat(`${s.success}`, `jour${s.success > 1 ? 's' : ''} réussi${s.success > 1 ? 's' : ''} · ${pct}`),
-      stat(String(s.streak), 'jours de suite'),
+      stat(String(s.streak), `jour${s.streak > 1 ? 's' : ''} de suite`),
       stat(String(s.jokersLeft), `joker${s.jokersLeft > 1 ? 's' : ''} restant${s.jokersLeft > 1 ? 's' : ''}`),
     ),
     h('p', { class: 'small muted', style: 'text-align:center' }, 'Un jour raté ne remet rien à zéro. Les jokers comptent dans ta série.'),
-    infoRow({ icon: ICON.heart, title: 'Mes pages', detail: `${s.answered} réponse${s.answered > 1 ? 's' : ''}, par chapitre`, onClick: () => openJournalSheet() }),
+    checkpointDone('60')
+      ? infoRow({ icon: ICON.spark, title: 'Mon chemin', detail: 'Ton bilan des 60 jours, avant et après', onClick: () => openJourneyRecap() })
+      : null,
+    baselineRow(),
+    infoRow({ icon: ICON.heart, title: 'Mes pages', detail: `${s.answered} page${s.answered > 1 ? 's' : ''} écrite${s.answered > 1 ? 's' : ''}, par chapitre`, onClick: () => openJournalSheet() }),
+    wheelRow(),
     rulesRow,
+    readingRows(),
     h('button', { class: 'btn block', type: 'button', style: 'margin-bottom:14px', onclick: () => openSundayReset(date) },
       resetDone(sunday) ? 'Revoir mon reset de la semaine' : 'Faire mon reset'),
     st === 'done'
       ? h('button', { class: 'dc-link', style: 'align-self:center;margin-bottom:12px', type: 'button', onclick: () => openJourneyStart() }, 'Recommencer un parcours')
       : null,
   );
+}
+
+function baselineRow(): HTMLElement {
+  const done = checkpointDone('0');
+  return infoRow({
+    icon: ICON.spark, title: 'Mon point de départ',
+    detail: done ? 'Tes repères du jour 0 : relire ou ajuster' : '3 minutes : ta roue de vie, ton intention, tes valeurs',
+    onClick: () => openCheckpoint('0'),
+  });
+}
+
+function wheelRow(): HTMLElement {
+  const { start, now, nowKey } = wheelsNowAndStart();
+  return infoRow({
+    icon: ICON.cycle, title: 'Ma roue de la vie',
+    detail: now && start ? `Jour ${nowKey} et départ, côte à côte` : start ? 'Ton départ ; on la revoit au jour 30' : 'Pas encore remplie',
+    onClick: () => openWheelSheet(),
+  });
+}
+
+function readingRows(): HTMLElement[] {
+  return [
+    infoRow({ icon: ICON.heart, title: 'À relire', detail: 'Les cartes « À relire quand ça monte »', onClick: () => openRereadSheet() }),
+    infoRow({ icon: ICON.leaf, title: 'Ce que disent les études', detail: 'Pourquoi écrire quelques minutes fait du bien', onClick: () => openScienceSheet() }),
+  ];
 }
