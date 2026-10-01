@@ -1,14 +1,15 @@
-// Coach blocks for the Today screen: the coach's word of the moment, the morning and
-// evening check-ins, the weekly bilan and the gentle "J'ai craqué" entry point.
+// Coach on the Today screen: ONE card (the coach's word of the moment with the morning /
+// evening check-in inline, the reply replacing the message), the weekly bilan and the
+// gentle "J'ai craqué" entry point.
 // Pure render functions: they read the store, never subscribe to it. Transient UI
 // state (a reply just shown, a bilan dismissed) lives in module variables.
 
 import type { Checkin } from '../types';
 import { store } from '../store';
-import { h, s, iconCircle, ICON, toast } from '../lib/ui';
+import { h, s, iconCircle, ICON, disclosure } from '../lib/ui';
 import { today, weekday, fmtDayMonth } from '../lib/dates';
 import {
-  coachNow, slotAt, morningReply, eveningReply, weeklyReview, MOOD_LABELS,
+  coachNow, coachMessages, slotAt, morningReply, eveningReply, weeklyReview, MOOD_LABELS,
 } from '../lib/coach';
 import type { CoachSlot, EveningAnswer } from '../lib/coach';
 import { openSlipSheet } from './slip';
@@ -52,60 +53,11 @@ export function moodFace(mood: number, size = 34): SVGElement {
   );
 }
 
-// ---------- coach card ----------
-
-/** The coach's message of the moment, with its voice and the gentle "J'ai craqué" entry. */
-export function coachCard(date: string = today()): HTMLElement {
-  const m = coachNow(date, store.state);
-  const slot = date === today() ? slotAt(date, hourNow()) : 'matin';
-  const slips = store.getDay(date).slips ?? [];
-  const last = slips[slips.length - 1];
-  return h('section', { class: 'card ux coach-card', 'aria-label': 'Le mot de ton coach' },
-    h('div', { class: 'eyebrow' }, SLOT_EYEBROW[slot]),
-    h('div', { class: 'coach-head' },
-      iconCircle(SLOT_ICON[slot], 'coach-ic'),
-      h('h3', { class: 'coach-title' }, m.title),
-    ),
-    h('p', { class: 'coach-body' }, m.body),
-    h('p', { class: 'coach-sign' }, '— ton coach'),
-    h('div', { class: 'coach-foot' },
-      last ? h('span', { class: 'small muted' }, `Noté à ${last.time.replace(':', ' h ')}. On continue.`) : h('span', { class: 'small muted' }, 'Un moment difficile ?'),
-      h('button', { class: 'coach-slip-btn', type: 'button', onclick: () => openSlipSheet(date) }, 'J’ai craqué'),
-    ),
-  );
-}
-
-// ---------- morning check-in ----------
+// ---------- the one coach card ----------
 
 function setCheckin(date: string, patch: Partial<Checkin>) {
   void store.updateDay(date, (d) => { d.checkin = { ...(d.checkin ?? {}), ...patch }; });
 }
-
-/** 1-tap morning mood (before noon, until answered). Null when not relevant. */
-export function checkinMorning(date: string = today()): HTMLElement | null {
-  const mood = store.getDay(date).checkin?.morningMood;
-  const isToday = date === today();
-  if (mood !== undefined && morningAnswered === date) {
-    const r = morningReply(mood, date, store.state);
-    return h('section', { class: 'card ux solo coach-check' },
-      h('div', { class: 'coach-head' }, moodFace(mood, 40), h('h3', { class: 'coach-title' }, r.title)),
-      h('p', { class: 'coach-body' }, r.body),
-      h('button', { class: 'btn ghost sm', style: 'align-self:flex-start', type: 'button', onclick: () => { morningAnswered = null; setCheckin(date, { morningMood: undefined }); } }, 'Changer ma réponse'),
-    );
-  }
-  if (mood !== undefined || !isToday || hourNow() >= 12) return null;
-  return h('section', { class: 'card ux solo coach-check' },
-    h('h3', { class: 'coach-q' }, 'Comment tu te sens ce matin ?'),
-    h('div', { class: 'coach-moods', role: 'group', 'aria-label': 'Ton humeur ce matin' },
-      MOOD_LABELS.map((label, i) => h('button', {
-        class: 'coach-mood', type: 'button', 'aria-label': label,
-        onclick: () => { morningAnswered = date; setCheckin(date, { morningMood: i + 1 }); },
-      }, moodFace(i + 1), h('span', { class: 'coach-mood-label' }, label))),
-    ),
-  );
-}
-
-// ---------- evening check-in ----------
 
 const EVENING: { value: EveningAnswer; label: string; mood: number }[] = [
   { value: 'bien', label: 'Bien', mood: 5 },
@@ -113,56 +65,140 @@ const EVENING: { value: EveningAnswer; label: string; mood: number }[] = [
   { value: 'dur', label: 'Dur', mood: 1 },
 ];
 
-/** Evening check-in (after 18 h, until answered). Null when not relevant. */
-export function checkinEvening(date: string = today()): HTMLElement | null {
-  const ci = store.getDay(date).checkin;
+export type CoachMoment = 'matin' | 'journee' | 'soir';
+
+export interface CoachCardOpts {
+  /** Moment of the Today screen (decides the inline check-in). */
+  moment: CoachMoment;
+  /** Extra line under the message (e.g. recovery when the cycle hero is hidden). */
+  extra?: Node | null;
+  /** The weekly bilan card is shown below: don't repeat the bilan message here. */
+  bilanShown?: boolean;
+  /** Local re-render for transient-state changes. */
+  rerender?: () => void;
+}
+
+/**
+ * The coach's single voice on Today: the message of the moment with the check-in
+ * inline (morning mood, evening "how was your day"). The answer replaces the
+ * message in place; one signature; the gentle "J'ai craqué" entry at the bottom.
+ */
+export function coachDayCard(date: string = today(), o: CoachCardOpts = { moment: 'matin' }): HTMLElement {
+  const isToday = date === today();
+  const hour = isToday ? hourNow() : 8;
+  const day = store.getDay(date);
+  const ci = day.checkin;
+  const slot = isToday ? slotAt(date, hour) : 'matin';
+  const eyebrow = h('div', { class: 'eyebrow' }, SLOT_EYEBROW[slot === 'bilan' ? 'soir' : slot]);
+
+  let title: string;
+  let body: string;
+  let face: SVGElement | null = null;
+  let inline: HTMLElement | null = null;
+  let after: HTMLElement | null = null;
+
+  const mood = ci?.morningMood;
   const ans = ci?.evening;
-  if (ans && eveningAnswered === date) {
+
+  if (o.moment === 'soir' && isToday && hour >= 18 && !ans) {
+    // Evening question, answered in one tap in the same card.
+    title = 'Comment s’est passée ta journée ?';
+    body = 'Toutes les réponses sont bonnes.';
+    inline = h('div', { class: 'coach-moods three dc-moods', role: 'group', 'aria-label': 'Ta journée' },
+      EVENING.map((x) => h('button', {
+        class: 'coach-mood', type: 'button', 'aria-label': x.label,
+        onclick: () => { eveningAnswered = date; eveningDraft = ''; setCheckin(date, { evening: x.value }); },
+      }, moodFace(x.mood), h('span', { class: 'coach-mood-label' }, x.label))));
+  } else if (o.moment === 'soir' && ans && eveningAnswered === date) {
     const r = eveningReply(ans, date, store.state);
-    const note = h('textarea', {
-      class: 'input coach-note', rows: 2, placeholder: 'Un mot sur ta journée ? (facultatif)', 'aria-label': 'Un mot sur ta journée',
+    title = r.title;
+    body = r.body;
+    face = moodFace(EVENING.find((x) => x.value === ans)?.mood ?? 3, 40);
+    after = eveningAfter(date, ans, o.rerender);
+  } else if (o.moment === 'matin' && mood !== undefined && morningAnswered === date) {
+    const r = morningReply(mood, date, store.state);
+    title = r.title;
+    body = r.body;
+    face = moodFace(mood, 40);
+    after = h('button', { class: 'dc-link', type: 'button', onclick: () => { morningAnswered = null; setCheckin(date, { morningMood: undefined }); } }, 'Changer ma réponse');
+  } else {
+    const m = o.bilanShown && slot === 'bilan' ? coachMessages(date, store.state).soir : coachNow(date, store.state);
+    title = m.title;
+    body = m.body;
+    if (o.moment === 'matin' && isToday && hour < 12 && mood === undefined) {
+      inline = h('div', { class: 'stack', style: 'gap:8px' },
+        h('p', { class: 'dc-q' }, 'Comment tu te sens ce matin ?'),
+        h('div', { class: 'coach-moods dc-moods', role: 'group', 'aria-label': 'Ton humeur ce matin' },
+          MOOD_LABELS.map((label, i) => h('button', {
+            class: 'coach-mood', type: 'button', 'aria-label': label,
+            onclick: () => { morningAnswered = date; setCheckin(date, { morningMood: i + 1 }); },
+          }, moodFace(i + 1), h('span', { class: 'coach-mood-label' }, label)))),
+      );
+    } else if (o.moment === 'matin' && mood !== undefined) {
+      after = h('button', { class: 'dc-link', type: 'button', onclick: () => { morningAnswered = null; setCheckin(date, { morningMood: undefined }); } },
+        `Ton humeur : ${MOOD_LABELS[mood - 1] ?? ''} · changer`);
+    } else if (o.moment === 'soir' && ans) {
+      after = h('button', { class: 'dc-link', type: 'button', onclick: () => { eveningAnswered = null; setCheckin(date, { evening: undefined }); } },
+        `Ta journée : ${EVENING.find((x) => x.value === ans)?.label ?? ''} · changer`);
+    }
+  }
+
+  const slips = day.slips ?? [];
+  const last = slips[slips.length - 1];
+  return h('section', { class: 'card ux coach-card dc-coach', 'aria-label': 'Le mot de ton coach' },
+    eyebrow,
+    h('div', { class: 'coach-head' },
+      face ?? iconCircle(SLOT_ICON[slot === 'bilan' ? 'soir' : slot], 'coach-ic'),
+      h('h3', { class: 'coach-title' }, title),
+    ),
+    h('p', { class: 'coach-body' }, body),
+    o.extra ?? null,
+    inline,
+    after,
+    h('p', { class: 'coach-sign' }, '— ton coach'),
+    // After a "Dur" answer the reply already offers "J'ai craqué": no second button.
+    o.moment === 'soir' && ans === 'dur' && eveningAnswered === date ? null : h('div', { class: 'coach-foot' },
+      h('span', { class: 'small muted' }, last ? `Noté à ${last.time.replace(':', ' h ')}. On continue.` : 'Un moment difficile ?'),
+      h('button', { class: 'coach-slip-btn', type: 'button', onclick: () => openSlipSheet(date) }, 'J’ai craqué'),
+    ),
+  );
+}
+
+/** Under the evening reply: "Dur" offers breathing / slip; the note is optional and folded. */
+function eveningAfter(date: string, ans: EveningAnswer, rerender?: () => void): HTMLElement {
+  const ci = store.getDay(date).checkin;
+  const noteKey = `coach-note-${date}`;
+  const note = () => {
+    const ta = h('textarea', {
+      class: 'input coach-note', rows: 2, placeholder: 'Un mot sur ta journée ?', 'aria-label': 'Un mot sur ta journée',
       value: ci?.eveningNote ?? eveningDraft,
       oninput: (e: Event) => { eveningDraft = (e.target as HTMLTextAreaElement).value; },
     });
-    return h('section', { class: 'card ux solo coach-check' },
-      h('div', { class: 'coach-head' }, moodFace(EVENING.find((x) => x.value === ans)?.mood ?? 3, 40), h('h3', { class: 'coach-title' }, r.title)),
-      h('p', { class: 'coach-body' }, r.body),
-      h('p', { class: 'coach-sign' }, '— ton coach'),
-      ans === 'dur'
-        ? h('div', { class: 'stack', style: 'gap:8px' },
-            h('p', { class: 'small' }, 'Si tu as craqué, tu peux le noter : je t’aiderai à repartir, sans jugement.'),
-            h('div', { class: 'td-actions' },
-              h('button', { class: 'btn', type: 'button', onclick: () => openSlipSheet(date) }, 'J’ai craqué'),
-              h('button', { class: 'btn', type: 'button', onclick: () => openBreathing(date) }, 'Respirer 5 min'),
-            ),
-          )
-        : null,
-      note,
-      h('div', { class: 'row between' },
-        h('button', { class: 'btn ghost sm', type: 'button', onclick: () => { eveningAnswered = null; setCheckin(date, { evening: undefined }); } }, 'Changer'),
-        h('button', {
-          class: 'btn sm', type: 'button',
-          onclick: () => {
-            const v = eveningDraft.trim() || (ci?.eveningNote ?? '');
-            eveningDraft = '';
-            eveningAnswered = null;
-            setCheckin(date, { eveningNote: v || undefined });
-            toast('Bonne soirée. À demain.');
-          },
-        }, 'Terminer'),
-      ),
-    );
-  }
-  if (ans || date !== today() || hourNow() < 18) return null;
-  return h('section', { class: 'card ux solo coach-check' },
-    h('h3', { class: 'coach-q' }, 'Comment s’est passée ta journée ?'),
-    h('div', { class: 'coach-moods three', role: 'group', 'aria-label': 'Ta journée' },
-      EVENING.map((o) => h('button', {
-        class: 'coach-mood', type: 'button', 'aria-label': o.label,
-        onclick: () => { eveningAnswered = date; eveningDraft = ''; setCheckin(date, { evening: o.value }); },
-      }, moodFace(o.mood), h('span', { class: 'coach-mood-label' }, o.label))),
+    return [
+      ta,
+      h('button', {
+        class: 'btn sm', style: 'align-self:flex-end', type: 'button',
+        onclick: () => {
+          const v = eveningDraft.trim() || (ci?.eveningNote ?? '');
+          eveningDraft = '';
+          eveningAnswered = null;
+          setCheckin(date, { eveningNote: v || undefined });
+        },
+      }, 'Enregistrer'),
+    ];
+  };
+  return h('div', { class: 'stack', style: 'gap:8px' },
+    ans === 'dur'
+      ? h('div', { class: 'dc-row2' },
+          h('button', { class: 'btn', type: 'button', onclick: () => openBreathing(date) }, 'Respirer 5 min'),
+          h('button', { class: 'btn', type: 'button', onclick: () => openSlipSheet(date) }, 'J’ai craqué'),
+        )
+      : null,
+    disclosure(ci?.eveningNote ? 'Ton mot du soir' : 'Ajouter un mot (facultatif)', note, noteKey, 'Replier'),
+    h('div', { class: 'row between' },
+      h('button', { class: 'dc-link', type: 'button', onclick: () => { eveningAnswered = null; setCheckin(date, { evening: undefined }); } }, 'Changer ma réponse'),
+      h('button', { class: 'dc-link', type: 'button', onclick: () => { eveningAnswered = null; eveningDraft = ''; rerender?.(); } }, 'Terminer'),
     ),
-    h('p', { class: 'small muted', style: 'text-align:center' }, 'Toutes les réponses sont bonnes.'),
   );
 }
 
@@ -212,26 +248,11 @@ export function weeklyBilanCard(date: string = today()): HTMLElement | null {
       h('p', { class: 'coach-focus-text' }, r.focus.charAt(0).toUpperCase() + r.focus.slice(1) + '.'),
       r.nextPhase ? h('p', { class: 'small' }, `Et la semaine prochaine, on passe en « ${r.nextPhase} ». Je t’explique tout lundi.`) : null,
     ),
-    h('p', { class: 'coach-sign' }, '— ton coach'),
     h('button', { class: 'btn sm', style: 'align-self:center;margin-bottom:14px', type: 'button', onclick: () => {
       bilanHidden = r.start;
       markBilanSeen(r.start);
-      toast('Belle semaine à toi.');
       const root = document.getElementById('screen');
       root?.querySelector('.coach-bilan')?.remove();
     } }, 'Merci, c’est noté'),
   );
-}
-
-/** Coach block for the top of TA JOURNÉE, in order. */
-export function coachBlocks(date: string = today()): HTMLElement[] {
-  const hour = date === today() ? hourNow() : 8;
-  const bilan = weeklyBilanCard(date);
-  const out: (HTMLElement | null)[] = [
-    bilan && slotAt(date, hour) === 'bilan' ? null : coachCard(date),
-    checkinMorning(date),
-    checkinEvening(date),
-    bilan,
-  ];
-  return out.filter((x): x is HTMLElement => !!x);
 }

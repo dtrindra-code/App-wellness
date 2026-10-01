@@ -187,7 +187,7 @@ export function hereSentence(date: string, info: CycleInfo): string {
   if (info.phase === 'fertile' || (info.phase === 'folliculaire' && daysBetween(date, info.fertileStart) <= 3)) {
     const ovN = daysBetween(date, info.ovulation);
     const ovWhen = ovN === 0 ? 'aujourd’hui' : ovN === 1 ? 'demain' : ovN > 0 ? `le ${fmtDayMonth(info.ovulation)}` : `passée (${fmtDayMonth(info.ovulation)})`;
-    second = `Ovulation ${info.ovulationFromLH ? '(test LH)' : 'estimée'} ${ovWhen}. ${second}`;
+    second = `Ovulation ${info.ovulationFromLH ? '(test LH)' : 'estimée'} ${ovWhen}`.replace(/\.$/, '') + `. ${second}`;
   }
   return `${first}. ${second}`;
 }
