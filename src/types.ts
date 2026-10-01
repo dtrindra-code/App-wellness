@@ -126,6 +126,15 @@ export interface Workout {
   steps?: number;
   /** True when minutes were estimated from distance or steps (no duration entered). */
   estimated?: boolean;
+  /** Imported from Garmin Connect (lib/garmin.ts). */
+  source?: 'garmin';
+  /** Garmin activity id (dedupe: an activity is imported once). */
+  garminId?: string;
+  /** Start time "HH:MM" (Garmin). */
+  time?: string;
+  avgHr?: number;
+  /** Calories counted by Garmin (shown only; the app keeps its own estimate). */
+  calories?: number;
 }
 
 export interface DayLog {
@@ -180,7 +189,16 @@ export interface Wellbeing {
   steps?: number;
   /** Breathing (cohérence cardiaque) sessions done today. */
   breathing?: number;
+  /** Set when some numbers came from the automatic Garmin import (lib/garmin.ts). */
+  source?: 'garmin';
+  /** Values as last imported from Garmin (a field still equal to it is Garmin's to update). */
+  garmin?: Partial<Record<GarminField, number>>;
+  /** Fields typed by hand: the Garmin import never overwrites them. */
+  manual?: GarminField[];
 }
+
+/** Wellbeing numbers the Garmin import can fill. */
+export type GarminField = 'sleepH' | 'bodyBattery' | 'stress' | 'restingHr' | 'steps';
 
 export type Intensity = 'facile' | 'modéré' | 'soutenu';
 

@@ -1,5 +1,5 @@
 import WIDGET_SCRIPT from '../../docs/widget/citation.js?raw';
-// "Plus" screen, in sections of info rows: TON PROFIL · TON CYCLE · TES DONNÉES · NOTIFICATIONS (web push) ·
+// "Plus" screen, in sections of info rows: TON PROFIL · TON CYCLE · TES DONNÉES · GARMIN CONNECT (V8) · NOTIFICATIONS (web push) ·
 // APPARENCE · BIENTÔT. Long explanations are folded.
 
 import type { Screen } from './types';
@@ -23,6 +23,8 @@ import {
 import {
   PUSH_SLOTS, currentSubscription, enablePush, pushStatus, savedSubscription, testNotification,
 } from '../lib/notify';
+import { GARMIN_SECRETS_URL, GARMIN_WORKFLOW_URL, checkGarmin, garminStatus, onGarminStatus } from '../lib/garmin';
+import { generateGarminKey, onGarminKey, readGarminKey } from '../lib/garmin-key';
 
 // ---------- theme (applied at import) ----------
 
@@ -57,7 +59,7 @@ function setTheme(t: Theme) {
 
 // ---------- transient UI state ----------
 
-type CopyKey = 'quotes' | 'export' | 'push' | 'widget';
+type CopyKey = 'quotes' | 'export' | 'push' | 'widget' | 'garmin-key' | 'garmin-token' | 'garmin-name';
 
 /** Text shown in a selectable textarea when the clipboard is refused. */
 let fallback: { key: CopyKey; text: string } | null = null;
@@ -526,7 +528,9 @@ function syncCards(): HTMLElement[] {
           ? 'Ta dernière sauvegarde date de plus d’une semaine. Active la sauvegarde automatique : tu n’auras plus à y penser.'
           : 'Si tu supprimes l’app de l’écran d’accueil, l’iPhone efface tes données. La sauvegarde automatique ci-dessous les met à l’abri.'))
     : null;
-  return [...(nudge ? [nudge] : []), on ? syncOnCard() : syncSetupCard()];
+  const card = on ? syncOnCard() : syncSetupCard();
+  card.id = 'set-sync';
+  return [...(nudge ? [nudge] : []), card];
 }
 
 function dataCard(): HTMLElement {
@@ -627,9 +631,165 @@ function widgetCard(): HTMLElement {
   );
 }
 
+// ---------- Garmin Connect (lib/garmin, V8) ----------
+
+const garmin = { busy: false, armNewKey: false, showKey: false };
+
+const refreshUnlessTyping = () => {
+  const a = document.activeElement;
+  if (a && /INPUT|TEXTAREA/.test(a.tagName)) return;
+  rerender?.();
+};
+onGarminStatus(refreshUnlessTyping);
+onGarminKey(refreshUnlessTyping);
+
+const plural = (n: number, one: string, many: string) => `${n} ${n > 1 ? many : one}`;
+
+function extLink(href: string, label: string, cls = 'btn block'): HTMLElement {
+  return h('a', { class: cls, href, target: '_blank', rel: 'noopener' }, label);
+}
+
+async function onGarminNow() {
+  if (garmin.busy) return;
+  garmin.busy = true;
+  rerender?.();
+  await checkGarmin({ force: true });
+  garmin.busy = false;
+  const st = garminStatus();
+  if (st.phase === 'ok') toast('Données Garmin à jour');
+  rerender?.();
+}
+
+function garminStatusRow(): HTMLElement {
+  const st = garminStatus();
+  const when = st.run?.at ?? st.fileUpdatedAt;
+  const imp = st.lastImport;
+  if (st.phase === 'checking' || garmin.busy) {
+    return infoRow({ icon: ICON.cycle, title: 'Synchro Garmin…', detail: 'Je regarde ce que GitHub a récupéré.' });
+  }
+  if (st.phase === 'error' || st.phase === 'nofile') {
+    return infoRow({ icon: ICON.cycle, title: st.phase === 'nofile' ? 'Pas encore de données Garmin' : 'Synchro Garmin en attente', detail: st.message, cls: st.phase === 'error' ? 'sync-err' : '' });
+  }
+  if (!when) {
+    return infoRow({ icon: ICON.cycle, title: 'Garmin pas encore relié', detail: 'Quatre étapes, une seule fois, et tes chiffres arrivent tout seuls.' });
+  }
+  const runBits = st.run ? ` · ${plural(st.run.days, 'jour', 'jours')} · ${plural(st.run.activities, 'activité', 'activités')}` : '';
+  const added = imp ? imp.added + imp.completed : 0;
+  const detail = [
+    st.lastCheck ? `Vérifié ${fmtWhen(st.lastCheck, 'aujourd’hui ')} sur ton téléphone` : null,
+    added ? `${plural(added, 'séance ajoutée', 'séances ajoutées')}` : null,
+    imp?.days ? `${plural(imp.days, 'jour complété', 'jours complétés')}` : null,
+  ].filter(Boolean).join(' · ');
+  return infoRow({ icon: ICON.cycle, title: `Dernière synchro : ${fmtWhen(when).replace(/^à /, '')}${runBits}`, detail });
+}
+
+function garminStep(n: number, title: string, done: boolean, ...body: Child[]): HTMLElement {
+  return h('li', { class: 'garmin-step' + (done ? ' done' : '') },
+    h('div', { class: 'garmin-step-head' },
+      h('span', { class: 'garmin-step-n num', 'aria-hidden': 'true' }, done ? '✓' : String(n)),
+      h('span', { class: 'garmin-step-title' }, title)),
+    h('div', { class: 'garmin-step-body stack' }, ...body),
+  );
+}
+
+function secretRow(name: string, what: string, copyBtn?: HTMLElement): HTMLElement {
+  return h('div', { class: 'garmin-secret' },
+    h('div', { class: 'garmin-secret-main' },
+      h('button', { type: 'button', class: 'garmin-secret-name', title: 'Copier le nom', onclick: () => void copy(name, 'garmin-name', `${name} copié`) }, name),
+      h('span', { class: 'small muted' }, what)),
+    copyBtn ?? null,
+  );
+}
+
+function garminSetup(): HTMLElement {
+  const cfg = readSyncConfig();
+  const key = readGarminKey();
+  const st = garminStatus();
+  const smallBtn = (label: string, onclick: () => void) => h('button', { type: 'button', class: 'btn garmin-copy', onclick }, label);
+
+  const keyBody: Child[] = key
+    ? [
+        h('pre', { class: 'push-json garmin-key', 'aria-label': 'Ta clé Garmin' }, garmin.showKey ? key : `${key.slice(0, 6)}••••••••••••••••••••${key.slice(-4)}`),
+        h('div', { class: 'grid-2' },
+          h('button', { type: 'button', class: 'btn primary', onclick: () => void copy(key, 'garmin-key', 'Clé Garmin copiée') }, 'Copier'),
+          h('button', { type: 'button', class: 'btn', onclick: () => { garmin.showKey = !garmin.showKey; rerender?.(); } }, garmin.showKey ? 'Masquer' : 'Afficher'),
+        ),
+        fallbackBox('garmin-key'),
+        h('button', {
+          type: 'button', class: 'action-link',
+          onclick: () => {
+            if (!garmin.armNewKey) { garmin.armNewKey = true; rerender?.(); return; }
+            garmin.armNewKey = false;
+            garmin.showKey = true;
+            generateGarminKey();
+            toast('Nouvelle clé créée : recopie-la dans GARMIN_SYNC_KEY');
+          },
+        }, garmin.armNewKey ? 'Confirmer : nouvelle clé (à recopier sur GitHub)' : 'Créer une nouvelle clé'),
+      ]
+    : [
+        h('p', { class: 'small muted' }, 'Une clé secrète, créée sur ton téléphone : GitHub chiffre tes données Garmin avec, et seule l’app peut les relire.'),
+        h('button', {
+          type: 'button', class: 'btn primary block', disabled: !cfg,
+          onclick: () => { garmin.showKey = true; generateGarminKey(); toast('Clé Garmin créée'); },
+        }, 'Générer ma clé Garmin'),
+      ];
+
+  return h('ol', { class: 'garmin-steps' },
+    garminStep(1, 'La sauvegarde automatique est active', !!cfg,
+      cfg
+        ? h('p', { class: 'small muted' }, 'Parfait : tes données Garmin arriveront dans le même espace privé de ton GitHub.')
+        : [
+            h('p', { class: 'small muted' }, 'La synchro Garmin passe par ta sauvegarde chiffrée sur GitHub : active-la d’abord, juste au-dessus.'),
+            h('button', { type: 'button', class: 'btn block', onclick: () => document.getElementById('set-sync')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }, 'Aller à la sauvegarde'),
+          ],
+    ),
+    garminStep(2, 'Ta clé Garmin', !!key, ...keyBody),
+    garminStep(3, 'Quatre secrets sur GitHub', !!st.fileUpdatedAt,
+      h('p', { class: 'small muted' }, 'Sur la page des secrets du dépôt : « New repository secret », colle le nom (touche-le ici pour le copier) puis la valeur, « Add secret ». Quatre fois :'),
+      secretRow('GARMIN_EMAIL', 'l’e-mail de ton compte Garmin'),
+      secretRow('GARMIN_PASSWORD', 'ton mot de passe Garmin'),
+      secretRow('GARMIN_SYNC_KEY', 'ta clé Garmin (étape 2)', key ? smallBtn('Copier la clé', () => void copy(key, 'garmin-key', 'Clé Garmin copiée')) : undefined),
+      secretRow('GIST_TOKEN', 'le même code github_pat_ que pour la sauvegarde', cfg ? smallBtn('Copier le code', () => void copy(cfg.token, 'garmin-token', 'Code GitHub copié')) : undefined),
+      fallbackBox('garmin-name'),
+      fallbackBox('garmin-token'),
+      extLink(GARMIN_SECRETS_URL, 'Ouvrir les secrets GitHub'),
+    ),
+    garminStep(4, 'Lancer la synchro une première fois', !!st.fileUpdatedAt,
+      h('p', { class: 'small muted' }, 'Sur GitHub : « Run workflow », puis encore « Run workflow ». Une minute plus tard, reviens ici et touche « Synchroniser maintenant ».'),
+      extLink(GARMIN_WORKFLOW_URL, 'Ouvrir la synchro sur GitHub'),
+    ),
+  );
+}
+
+function garminCard(): HTMLElement {
+  const st = garminStatus();
+  const ready = !!st.fileUpdatedAt && st.phase !== 'off' && st.phase !== 'nokey';
+  const canCheck = st.phase !== 'off' && st.phase !== 'nokey';
+  return h('section', { class: 'card ux solo garmin-card' },
+    h('p', { class: 'small muted' },
+      'Ton sommeil, ta Body Battery, ton stress, tes pas et tes séances arrivent tout seuls dans l’app. Tu n’as plus rien à recopier, et ce que tu corriges à la main reste à toi.'),
+    garminStatusRow(),
+    canCheck
+      ? h('button', { type: 'button', class: 'btn primary block', disabled: garmin.busy || st.phase === 'checking', onclick: () => void onGarminNow() },
+          garmin.busy || st.phase === 'checking' ? 'Synchro…' : 'Synchroniser maintenant')
+      : null,
+    canCheck
+      ? h('p', { class: 'small muted' },
+          'GitHub va chercher tes données Garmin toutes les 3 h environ (de 6 h à 23 h). Besoin de tout de suite ? ',
+          h('a', { href: GARMIN_WORKFLOW_URL, target: '_blank', rel: 'noopener' }, 'Lance la synchro sur GitHub'),
+          ' (« Run workflow »), puis reviens toucher le bouton.')
+      : null,
+    ready ? disclosure('Revoir la mise en place', () => garminSetup(), 'set-garmin-setup', 'Masquer la mise en place') : garminSetup(),
+    disclosure('Bon à savoir', () => [
+      h('p', { class: 'small muted' }, 'Garmin ne propose pas d’accès officiel pour les particuliers : la synchro passe par la même porte que l’app Garmin Connect, avec une bibliothèque libre. Elle peut s’arrêter si Garmin change quelque chose ; ta saisie à la main dans Équilibre reste toujours là.'),
+      h('p', { class: 'small muted' }, 'Choisis pour Garmin un mot de passe que tu n’utilises nulle part ailleurs. La validation en deux étapes doit être désactivée sur ce compte Garmin.'),
+      h('p', { class: 'small muted' }, 'Tes chiffres sont chiffrés avec ta clé avant d’arriver sur GitHub, et les journaux du dépôt public n’affichent que des nombres (« 3 jours, 2 activités »).'),
+    ], 'set-garmin-info', 'Masquer'),
+  );
+}
+
 function soonCard(): HTMLElement {
   const items: [string, string][] = [
-    ['Garmin', 'Tes séances importées toutes seules, via Strava ou un export.'],
     ['Balance via Apple Santé', 'Ton poids récupéré sans le recopier.'],
     ['Lecture photo par IA', 'Optionnelle, avec une clé personnelle.'],
   ];
@@ -665,6 +825,8 @@ export const renderSettings: Screen = (root, ctx) => {
     sectionTitle('Tes données'),
     ...syncCards(),
     dataCard(),
+    sectionTitle('Garmin Connect'),
+    garminCard(),
     sectionTitle('Notifications'),
     notificationsCard(),
     sectionTitle('Widget citation'),

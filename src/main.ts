@@ -11,6 +11,7 @@ import { renderSettings } from './screens/settings';
 import { renderBalance } from './screens/balance';
 import { openOnboarding } from './screens/onboarding';
 import { startSync } from './lib/sync';
+import { startGarmin } from './lib/garmin';
 
 const SCREENS: Record<TabId, Screen> = {
   today: renderToday,
@@ -87,6 +88,7 @@ root.addEventListener('focusout', () => setTimeout(() => { if (dirty) render(); 
 store.subscribe(render);
 render();
 startSync(); // encrypted auto-backup to the user's secret gist (when enabled in Plus)
+startGarmin(); // Garmin data written by the GitHub cron into that gist (Plus → Garmin Connect)
 
 store.ready.then(() => {
   if (!store.profile.onboarded) openOnboarding();

@@ -1,0 +1,46 @@
+name: Synchro Garmin
+
+# Copies the last days of Garmin Connect (sleep, Body Battery, stress, resting HR, steps,
+# activities) ENCRYPTED into the secret gist of the app's backup; the app decrypts it on the
+# phone. See docs/GARMIN.md. Logs only show counts, never personal data (public repo).
+#
+# Every 3 hours from about 6 h to 23 h in Paris (UTC 4, 7, 10, 13, 16, 19, 22 →
+# 6 h … 24 h in summer, 5 h … 23 h in winter). GitHub may start cron jobs a bit late.
+
+on:
+  schedule:
+    - cron: '17 4-22/3 * * *'
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 'Nombre de jours à récupérer (1 à 30)'
+        type: string
+        default: '3'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: garmin
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: scripts/garmin/requirements.txt
+      - run: pip install --disable-pip-version-check -q -r scripts/garmin/requirements.txt
+      - name: Synchroniser Garmin
+        run: python scripts/garmin/sync.py
+        env:
+          GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
+          GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
+          GARMIN_SYNC_KEY: ${{ secrets.GARMIN_SYNC_KEY }}
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+          DAYS: ${{ github.event.inputs.days || '3' }}

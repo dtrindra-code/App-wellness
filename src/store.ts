@@ -105,9 +105,27 @@ class Store {
     return () => this.listeners.delete(fn);
   }
 
+  private batching = 0;
+  private pending = false;
+
   private emit() {
+    if (this.batching) { this.pending = true; return; }
     this.saveLocal();
     this.listeners.forEach((fn) => fn());
+  }
+
+  /** Run several mutations with a single save + notification at the end (e.g. a Garmin import). */
+  async batch(fn: () => Promise<void> | void): Promise<void> {
+    this.batching++;
+    try {
+      await fn();
+    } finally {
+      this.batching--;
+      if (!this.batching && this.pending) {
+        this.pending = false;
+        this.emit();
+      }
+    }
   }
 
   // ---------- reads ----------

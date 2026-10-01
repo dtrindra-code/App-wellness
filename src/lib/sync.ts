@@ -7,10 +7,13 @@
 //   ciphertext: { app, v, updatedAt, salt, iv, data } (base64). Plaintext never leaves the device.
 // - Changes are pushed automatically (4 s debounce, and when the app goes to the background).
 // The token lives only in this browser's localStorage and is never logged.
+// The encrypted payload also carries `secrets` (the "clé Garmin", lib/garmin-key.ts) so a restore
+// keeps the Garmin sync working; the plain JSON export never contains it.
 
 import { store } from '../store';
 import { h } from './ui';
 import { daysBetween, today } from './dates';
+import { isGarminKey, onGarminKey, readGarminKey, writeGarminKey } from './garmin-key';
 
 const CFG_KEY = 'cap-maldives:sync';
 const LAST_EXPORT_KEY = 'cap-maldives:lastExport';
@@ -125,22 +128,40 @@ export async function decrypt(p: Payload, keyRaw: Uint8Array<ArrayBuffer>): Prom
   }
 }
 
+/** Secrets that travel only inside the encrypted backup (never in the plain export). */
+interface Secrets { garminKey?: string }
+const localSecrets = (): Secrets => {
+  const k = readGarminKey();
+  return k ? { garminKey: k } : {};
+};
+
+/** store.exportJSON() + secrets: the plaintext that gets encrypted. */
+function backupPlaintext(): string {
+  const data = JSON.parse(store.exportJSON());
+  const secrets = localSecrets();
+  if (secrets.garminKey) data.secrets = secrets;
+  return JSON.stringify(data, null, 2);
+}
+
 /** Fingerprint of the app data (without the export timestamp). */
-async function hashOf(data: { profile: unknown; days: unknown; favorites: unknown }): Promise<string> {
-  const json = JSON.stringify({ profile: data.profile, days: data.days, favorites: data.favorites });
+async function hashOf(data: { profile: unknown; days: unknown; favorites: unknown; secrets?: Secrets }): Promise<string> {
+  const secrets = data.secrets?.garminKey ? { garminKey: data.secrets.garminKey } : undefined;
+  const json = JSON.stringify({ profile: data.profile, days: data.days, favorites: data.favorites, ...(secrets ? { secrets } : {}) });
   return toB64(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(json))));
 }
-const localHash = () => hashOf(store.state);
+const localHash = () => hashOf({ ...store.state, secrets: localSecrets() });
 
 // ---------- GitHub REST ----------
 
-interface GistFile { filename?: string; content?: string; truncated?: boolean; raw_url?: string }
-interface Gist { id: string; updated_at: string; files: Record<string, GistFile | null> }
+export interface GistFile { filename?: string; content?: string; truncated?: boolean; raw_url?: string }
+export interface Gist { id: string; updated_at: string; files: Record<string, GistFile | null> }
 
-async function gh<T>(token: string, path: string, init: RequestInit = {}): Promise<T> {
+/** GitHub REST call with the user's token (French SyncError on failure; `status` set on 403/404). */
+export async function gh<T>(token: string, path: string, init: RequestInit = {}): Promise<T> {
   let res: Response;
   try {
     res = await fetch(API + path, {
+      cache: 'no-store',
       ...init,
       headers: {
         Authorization: `Bearer ${token}`,
@@ -164,28 +185,34 @@ async function gh<T>(token: string, path: string, init: RequestInit = {}): Promi
 
 const cleanToken = (t: string) => t.trim().replace(/^Bearer\s+/i, '');
 
-/** Most recently updated gist holding the backup file, if any. */
-async function findGist(token: string): Promise<Gist | null> {
+/** Most recently updated gist holding `file` (default: the backup file), if any. */
+export async function findGist(token: string, file = FILE): Promise<Gist | null> {
   const list = await gh<Gist[]>(token, '/gists?per_page=100');
-  const hits = list.filter((g) => g.files && Object.keys(g.files).includes(FILE));
+  const hits = list.filter((g) => g.files && Object.keys(g.files).includes(file));
   hits.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
   return hits[0] ?? null;
 }
 
-async function readPayload(token: string, gistId: string): Promise<Payload> {
-  const g = await gh<Gist>(token, `/gists/${encodeURIComponent(gistId)}`);
-  const f = g.files?.[FILE];
-  if (!f) throw new SyncError('La sauvegarde est introuvable dans ce Gist.');
-  let text = f.content ?? '';
+/** Text of a gist file (follows raw_url when GitHub truncated it). Null when absent. */
+export async function gistFileText(token: string, gist: Gist, file: string): Promise<string | null> {
+  const f = gist.files?.[file];
+  if (!f) return null;
   if (f.truncated && f.raw_url) {
     try {
-      const r = await fetch(f.raw_url, { headers: { Authorization: `Bearer ${token}` } });
+      const r = await fetch(f.raw_url, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
       if (!r.ok) throw new Error();
-      text = await r.text();
+      return await r.text();
     } catch {
-      throw new SyncError('Impossible de télécharger la sauvegarde complète. Réessaie.');
+      throw new SyncError('Impossible de télécharger le fichier complet. Réessaie.');
     }
   }
+  return f.content ?? '';
+}
+
+async function readPayload(token: string, gistId: string): Promise<Payload> {
+  const g = await gh<Gist>(token, `/gists/${encodeURIComponent(gistId)}`);
+  const text = await gistFileText(token, g, FILE);
+  if (text === null) throw new SyncError('La sauvegarde est introuvable dans ce Gist.');
   let p: Payload;
   try { p = JSON.parse(text); } catch { throw new SyncError('La sauvegarde sur GitHub est illisible.'); }
   if (!p || p.app !== 'cap-maldives' || !p.salt || !p.iv || !p.data) throw new SyncError('Ce Gist ne contient pas une sauvegarde de l’app.');
@@ -195,7 +222,7 @@ async function readPayload(token: string, gistId: string): Promise<Payload> {
 /** Encrypt the current data and create/update the gist. Returns the updated config (not saved). */
 async function upload(cfg: SyncConfig, keepalive = false): Promise<SyncConfig> {
   const hash = await localHash();
-  const payload = await encrypt(store.exportJSON(), fromB64(cfg.keyB64), cfg.saltB64);
+  const payload = await encrypt(backupPlaintext(), fromB64(cfg.keyB64), cfg.saltB64);
   const content = JSON.stringify(payload);
   const files = { [FILE]: { content } };
   // keepalive (page going to background) is limited to ~64 KB bodies.
@@ -325,6 +352,10 @@ async function applyBackup(cfg: SyncConfig, payload: Payload, keyRaw: Uint8Array
   const plain = await decrypt(payload, keyRaw);
   clearTimeout(timer);
   await store.importJSON(plain);
+  try {
+    const garminKey = (JSON.parse(plain) as { secrets?: Secrets }).secrets?.garminKey;
+    if (isGarminKey(garminKey) && garminKey !== readGarminKey()) writeGarminKey(garminKey);
+  } catch { /* already parsed by importJSON */ }
   const next: SyncConfig = {
     ...cfg,
     keyB64: toB64(keyRaw),
@@ -413,6 +444,7 @@ export function startSync() {
   if (started || typeof window === 'undefined') return;
   started = true;
   store.subscribe(schedule);
+  onGarminKey(schedule); // a new Garmin key goes into the encrypted backup
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden' && (timer !== undefined || dirty) && readSyncConfig()) {
       clearTimeout(timer);
