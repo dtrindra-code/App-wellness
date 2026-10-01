@@ -23,7 +23,7 @@ import type { CycleGuide, GuideIdea, GuideOptions, GuideTip, Moment } from '../l
 import { cycleLog, hereSentence, openPeriodSheet } from './cycle-calendar';
 import { openFoodSearch, slotForNow } from './food-search';
 import { openBreathing } from './breathing';
-import { cycleRing } from './today-ring';
+import { cycleStrip, cycleLegend } from './cycle-strip';
 import { openLogSheet } from './training';
 import {
   toggleHabit, markDone, popCls, recoveryLevel, recoveryLine, recoveryNumbers, RECOVERY_LABEL, openGarminSheet, lateBlock,
@@ -138,14 +138,13 @@ export function cycleHero(date: string, moment: Moment, ctx: ScreenCtx, guide: G
       ? h('button', { class: 'chip dc-chip-btn', type: 'button', onclick: () => openTestSheet(date) }, 'Faire un test')
       : null;
     return h('section', { class: 'card ux paper dc-hero', 'aria-label': 'Ton cycle' },
-      h('div', { class: 'dc-hero-top' },
-        cycleRing(info, { size: 112, periodLength: cs.periodLength, label: here, legend: true }),
-        h('div', { class: 'dc-hero-text' },
-          h('span', { class: 'eyebrow' }, 'Tu es ici'),
-          h('h2', null, label),
-          h('p', { class: 'italic dc-hero-day' }, when.charAt(0).toUpperCase() + when.slice(1)),
-        ),
+      h('div', { class: 'dc-hero-text' },
+        h('span', { class: 'eyebrow' }, 'Tu es ici'),
+        h('h2', null, info.phase === 'retard' ? label : `J${info.day} · ${label}`),
+        h('p', { class: 'italic dc-hero-day' }, when.charAt(0).toUpperCase() + when.slice(1)),
       ),
+      cycleStrip(date, info),
+      cycleLegend(),
       h('p', { class: 'dc-hero-meaning' }, meaning),
       testBtn,
       recoveryRow(date),
@@ -165,7 +164,6 @@ export function cycleHero(date: string, moment: Moment, ctx: ScreenCtx, guide: G
   return h('section', { class: 'card ux paper dc-hero compact', 'aria-label': 'Ton cycle' },
     h('div', { class: 'dc-hero-row' },
       h('button', { class: 'dc-hero-main', type: 'button', onclick: () => ctx.go('balance'), 'aria-label': `${here} Voir mon cycle` },
-        cycleRing(info, { size: 56, periodLength: cs.periodLength, label: here }),
         h('span', { class: 'info-main' },
           h('span', { class: 'info-title' }, info.phase === 'retard' ? label : `J${info.day} · ${label}`),
           h('span', { class: 'info-detail' }, meaning),
@@ -173,6 +171,7 @@ export function cycleHero(date: string, moment: Moment, ctx: ScreenCtx, guide: G
       ),
       recoveryPill(date),
     ),
+    cycleStrip(date, info, { ends: false }),
     tomorrow ? h('p', { class: 'small dc-hero-tomorrow' }, tomorrow) : null,
   );
 }

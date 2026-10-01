@@ -48,6 +48,7 @@ export const renderToday: Screen = (root, ctx) => {
   const guide = guideSafe(date, { moment });
 
   root.append(header(date, ctx));
+  root.append(quoteBand(date));
   if (store.state.loaded && !p.onboarded) root.append(onboardingCard());
 
   const hero = cycleHero(date, moment, ctx, guide);
@@ -462,7 +463,6 @@ function nudgeDue(date: string): boolean {
 
 function footer(date: string, moment: Moment, ctx: ScreenCtx): HTMLElement[] {
   const out: HTMLElement[] = [];
-  if (moment === 'soir') out.push(quoteBand(date));
   if (nudgeDue(date)) {
     out.push(h('button', { class: 'dc-foot-link', type: 'button', onclick: () => ctx.go('settings') },
       'Pense à activer la sauvegarde automatique ›'));
