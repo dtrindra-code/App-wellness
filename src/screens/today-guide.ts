@@ -297,7 +297,7 @@ export function plateCard(date: string, moment: Moment, ctx: ScreenCtx, guide: G
         macro('Protéines', eaten.protein, t.protein, 'g'),
         h('div', { class: 'td-water' },
           h('div', { class: 'td-mini' },
-            h('span', { class: 'small', style: 'font-weight:700' }, 'Eau'),
+            h('span', { class: 'small', style: 'font-weight:700' }, 'Eau & tisanes'),
             h('span', { class: 'num small muted' + popCls('water') }, `${fmtKg(water)} / ${fmtKg(t.waterL)} L`),
           ),
           h('div', { class: 'row', style: 'gap:6px' },
@@ -368,8 +368,8 @@ const HABIT_KEYS = new Set(HABITS.map((x) => x.key));
 /** Without cycle content: three pillars that fit the moment. */
 function fallbackTips(moment: Moment, hb: Record<string, boolean>): GuideTip[] {
   const list: Record<Moment, [string, string, string][]> = {
-    matin: [['light', '10 min de lumière dehors', 'avant 10 h, même nuageux'], ['breakfast', 'Petit-déj protéiné', 'pour tenir jusqu’à midi'], ['coffee', 'Café avant 14 h', '2 tasses max aujourd’hui']],
-    journee: [['walk', 'Marche 15 min', 'après le déjeuner, ça compte'], ['me', '10 min pour toi', 'rien à faire, c’est le but'], ['coffee', 'Pas de café après 14 h', 'le sommeil sera souvent meilleur']],
+    matin: [['light', '10 min de lumière dehors', 'avant 10 h, même nuageux'], ['breakfast', 'Petit-déj protéiné', 'pour tenir jusqu’à midi'], ['coffee', 'Thé avant 14 h', 'après, tisanes à volonté']],
+    journee: [['walk', 'Marche 15 min', 'après le déjeuner, ça compte'], ['me', '10 min pour toi', 'rien à faire, c’est le but'], ['coffee', 'Pas de thé après 14 h', 'une tisane à la place']],
     soir: [['screens', 'Écrans off 30 min avant', 'un livre, une tisane'], ['sleep', 'Au lit à heure régulière', 'la meilleure récup, c’est la nuit'], ['me', '10 min pour toi', 'rien à faire, c’est le but']],
   };
   return list[moment].map(([key, title, detail]) => ({
@@ -380,7 +380,7 @@ function fallbackTips(moment: Moment, hb: Record<string, boolean>): GuideTip[] {
 
 const SHORT: Record<string, string> = {
   sleep: 'Sommeil', light: 'Lumière', coherence: 'Respirer', walk: 'Marche',
-  coffee: 'Café < 14 h', screens: 'Écrans off', breakfast: 'Petit-déj', me: 'Moi',
+  coffee: 'Thé < 14 h', screens: 'Écrans off', breakfast: 'Petit-déj', me: 'Moi',
 };
 const CHIP_ORDER: Record<Moment, string[]> = {
   matin: ['light', 'breakfast', 'coffee', 'coherence', 'walk', 'me', 'screens', 'sleep'],

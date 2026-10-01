@@ -32,8 +32,8 @@ export const HABITS: Habit[] = [
   },
   {
     key: 'coffee',
-    label: 'Pas de café après 14 h',
-    why: 'La moitié de la caféine est encore là 5 à 6 h après la tasse : le café de l’après-midi peut alléger le sommeil sans qu’on le sente.',
+    label: 'Pas de thé (ni café) après 14 h',
+    why: 'Le thé contient de la théine, la même molécule que la caféine : la moitié est encore là 5 à 6 h après la tasse. L’après-midi, passe aux tisanes.',
   },
   {
     key: 'screens',

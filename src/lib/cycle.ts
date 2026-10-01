@@ -221,7 +221,7 @@ export const TTC_TIPS: string[] = [
   'Acide folique (vitamine B9) : il est recommandé de le commencer avant la grossesse. Demande à ton médecin ou ta sage-femme.',
   'Perdre 5 à 10 % de son poids quand l’IMC dépasse 30 améliore la fertilité. Un déficit trop fort peut au contraire perturber l’ovulation : on reste modéré.',
   'Alcool : zéro dans la 2e moitié du cycle, et idéalement le moins possible tout court.',
-  'Café : 2 à 3 tasses par jour maximum.',
+  'Thé et café : la théine, c’est de la caféine. En essai bébé, environ 4 tasses de thé (ou 2 cafés) par jour max. Tisanes : la plupart sont ok, réglisse et sauge avec modération.',
   'Le sport modéré est bénéfique. Ce sont les très gros volumes intenses qui peuvent gêner.',
 ];
 

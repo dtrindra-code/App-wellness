@@ -272,7 +272,7 @@ const MORNING_FOCUS: Record<string, Tpl[]> = {
     ['J−{toM} · Focus protéines', 'Des protéines à chaque repas : œufs, skyr, poulet, poisson ou tofu. C’est ce qui te tiendra jusqu’au soir.'],
     ['J−{toM} · Moins de sel', 'Focus du jour : moins de sel et de plats tout prêts. Le corps relâche l’eau, tu te sentiras plus légère.'],
     ['J−{toM} · Légumes d’abord', 'Un seul focus : la moitié de l’assiette en légumes, midi et soir. Simple, et ça change tout.'],
-    ['J−{toM} · Boissons', 'Focus du jour : eau, thé, café sans sucre. Les boissons sucrées, on les met de côté pendant le lavage.'],
+    ['J−{toM} · Boissons', 'Focus du jour : eau, tisanes, thé sans sucre. Les boissons sucrées, on les met de côté pendant le lavage.'],
   ],
   progressive: [
     ['J−{toM} · Un focus', 'Aujourd’hui : des protéines au petit-déj. C’est le geste qui fait tenir toute la journée.'],
