@@ -13,6 +13,7 @@ import {
 } from '../lib/coach';
 import type { CoachSlot, EveningAnswer } from '../lib/coach';
 import { openSlipSheet } from './slip';
+import { journeyDay } from '../lib/journey';
 import { openBreathing } from './breathing';
 
 // ---------- transient UI state ----------
@@ -99,6 +100,8 @@ export function coachDayCard(date: string = today(), o: CoachCardOpts = { moment
 
   const mood = ci?.morningMood;
   const ans = ci?.evening;
+  // "Revenir à moi" active: its energy check-in (CE MATIN) is the one morning question.
+  const journeyOn = isToday && journeyDay(date) !== null;
 
   if (o.moment === 'soir' && isToday && hour >= 18 && !ans) {
     // Evening question, answered in one tap in the same card.
@@ -115,7 +118,7 @@ export function coachDayCard(date: string = today(), o: CoachCardOpts = { moment
     body = r.body;
     face = moodFace(EVENING.find((x) => x.value === ans)?.mood ?? 3, 40);
     after = eveningAfter(date, ans, o.rerender);
-  } else if (o.moment === 'matin' && mood !== undefined && morningAnswered === date) {
+  } else if (o.moment === 'matin' && mood !== undefined && morningAnswered === date && !journeyOn) {
     const r = morningReply(mood, date, store.state);
     title = r.title;
     body = r.body;
@@ -125,7 +128,7 @@ export function coachDayCard(date: string = today(), o: CoachCardOpts = { moment
     const m = o.bilanShown && slot === 'bilan' ? coachMessages(date, store.state).soir : coachNow(date, store.state);
     title = m.title;
     body = m.body;
-    if (o.moment === 'matin' && isToday && hour < 12 && mood === undefined) {
+    if (o.moment === 'matin' && isToday && hour < 12 && mood === undefined && !journeyOn) {
       inline = h('div', { class: 'stack', style: 'gap:8px' },
         h('p', { class: 'dc-q' }, 'Comment tu te sens ce matin ?'),
         h('div', { class: 'coach-moods dc-moods', role: 'group', 'aria-label': 'Ton humeur ce matin' },
@@ -134,7 +137,7 @@ export function coachDayCard(date: string = today(), o: CoachCardOpts = { moment
             onclick: () => { morningAnswered = date; setCheckin(date, { morningMood: i + 1 }); },
           }, moodFace(i + 1), h('span', { class: 'coach-mood-label' }, label)))),
       );
-    } else if (o.moment === 'matin' && mood !== undefined) {
+    } else if (o.moment === 'matin' && mood !== undefined && !journeyOn) {
       after = h('button', { class: 'dc-link', type: 'button', onclick: () => { morningAnswered = null; setCheckin(date, { morningMood: undefined }); } },
         `Ton humeur : ${MOOD_LABELS[mood - 1] ?? ''} · changer`);
     } else if (o.moment === 'soir' && ans) {

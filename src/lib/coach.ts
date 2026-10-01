@@ -15,6 +15,7 @@ import type { CycleInfo } from './cycle';
 import { recoveryFlag, habitScore, HABITS } from './habits';
 import type { RecoveryFlag } from './habits';
 import { adaptedSessionsOn, sessionsOn } from '../data/plan';
+import { journeyDay, weekInsight, besoinDe, resetDone, resetSunday } from './journey';
 
 export type CoachSlot = 'matin' | 'midi' | 'aprem' | 'soir' | 'bilan';
 
@@ -394,6 +395,28 @@ const SOIR_PREGNANT: Tpl[] = [
   ['Comment te sens-tu ?', 'La journée est finie. Dis-moi comment c’était, et repose-toi : c’est ton travail du soir.'],
 ];
 
+// "Revenir à moi" (never quotes what she wrote: only counts and need labels).
+const JOURNEY_SOIR: Tpl[] = [
+  ['Ta page du jour', 'Jour {n} de Revenir à moi : une question pour toi, 5 min max. Si ce n’est pas le moment, tu passes.'],
+  ['Un moment pour toi', 'Ta question du jour t’attend dans Ce soir. Un tap suffit, quelques mots si tu veux.'],
+  ['Rien que pour toi', 'Jour {n} : 5 minutes pour toi avant de dormir. Tu réponds ou tu passes, les deux sont ok.'],
+];
+
+const JOURNEY_NEED_SOIR: Tpl[] = [
+  ['On protège ta soirée ?', 'Cette semaine tu as noté {k} fois {need}. Ce soir, un moment rien que pour toi ?'],
+  ['Et si on t’écoutait ?', '{k} fois {need} cette semaine. Ce soir, une seule chose : ce qui te fait du bien.'],
+];
+
+/** Journey line of the evening, or null (not in the journey, or today's page is written). */
+function journeySoir(c: Ctx, state: AppState, s: string): CoachMessage | null {
+  const n = journeyDay(c.date, c.p);
+  if (n === null || c.day.journey?.answer) return null;
+  const ins = weekInsight(c.date, state);
+  const calm = ins?.topNeed && ins.topNeed.count >= 3 && ['calme', 'repos', 'espace'].includes(ins.topNeed.key);
+  if (calm && hash(s) % 2 === 0) return msg(JOURNEY_NEED_SOIR, s, { k: ins!.topNeed!.count, need: besoinDe(ins!.topNeed!.key) });
+  return msg(JOURNEY_SOIR, s, { n });
+}
+
 // ---------- wins ----------
 
 /** Concrete wins of the day, most meaningful first (short French phrases). */
@@ -477,8 +500,13 @@ function aprem(c: Ctx, state: AppState): CoachMessage {
 function soir(c: Ctx, state: AppState): CoachMessage {
   const s = `${c.seed}|soir`;
   if (c.phase === 'avant' && c.toStart === 1) return msg(SOIR_EVE_START, s);
-  if (c.day.checkin?.evening) return msg(SOIR_DONE, s);
+  if (c.day.checkin?.evening) return journeySoir(c, state, s) ?? msg(SOIR_DONE, s);
   if (c.slipsToday.length) return msg(SOIR_SLIP, s);
+  // Half of the evenings (stable per day), the journey's page of the day.
+  if (hash(`${s}|jr`) % 2 === 0) {
+    const jr = journeySoir(c, state, s);
+    if (jr) return jr;
+  }
   if (c.pregnant) return msg(SOIR_PREGNANT, s);
   const wins = dayWins(c.date, state);
   if (wins.length) return msg(SOIR_WIN, s, { win: pick(wins.slice(0, 3), s) });
@@ -490,6 +518,14 @@ function bilan(date: string, state: AppState): CoachMessage {
   const s = `${date}|bilan`;
   const title = pick(['Ton bilan de la semaine', 'Ta semaine, en vrai', 'Bilan du dimanche'], s);
   const win = r.wins[0] ?? 'Tu es toujours là';
+  if (journeyDay(date, state.profile) !== null) {
+    const ins = weekInsight(date, state);
+    const reset = resetDone(resetSunday(date), state.days) ? '' : ' Ton reset du dimanche t’attend.';
+    if (ins?.topNeed && ins.topNeed.count >= 3) {
+      return clamp({ title: 'Ta semaine, côté toi', body: `Cette semaine tu as noté ${ins.topNeed.count} fois ${besoinDe(ins.topNeed.key)} : on en tient compte.${reset}` });
+    }
+    if (reset) return clamp({ title, body: `${win}.${reset} 5 étapes, 5 minutes.` });
+  }
   return clamp({ title, body: `${win}. Pour la semaine prochaine, un seul focus : ${r.focus}.` });
 }
 
