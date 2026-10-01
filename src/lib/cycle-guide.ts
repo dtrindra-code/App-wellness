@@ -192,7 +192,7 @@ export const PLATES: Record<GuidePhase, PlateDef> = {
       'Boissons chaudes : tisane, bouillon',
     ],
     limit: [
-      'Thé et café pendant les repas riches en fer : prends-les 1 h après',
+      'Thé pendant les repas riches en fer : il freine son absorption, prends-le 1 h après (les tisanes sont ok)',
       'Alcool',
       'Plats très salés, souvent synonymes de ballonnements',
     ],
@@ -222,7 +222,7 @@ export const PLATES: Record<GuidePhase, PlateDef> = {
       idea('skyr-fruits-rouges', 'Skyr nature + fruits rouges', ['skyr-nature', 'fruits-rouges-melanges'], { grams: [150, 80], slot: 'collation', why: 'Protéines faciles, peu de sucre', lavageOk: true }),
       idea('saumon-patate', 'Saumon, patate douce, haricots verts', ['saumon-cuit', 'patate-douce-cuite', 'haricots-verts-cuits'], { grams: [125, 150, 150], slot: 'diner', why: 'Oméga-3 et féculent complet' }),
     ],
-    ttc: 'Prépare le terrain : folates (lentilles, pois chiches, brocoli, avocat) et oméga-3 (sardines, saumon, noix). Café : 2 à 3 tasses max.',
+    ttc: 'Prépare le terrain : folates (lentilles, pois chiches, brocoli, avocat) et oméga-3 (sardines, saumon, noix). Thé : 4 tasses max par jour (la théine compte comme la caféine), tisanes à volonté.',
     weight: 'C’est souvent ta meilleure fenêtre : garde le budget du jour, sans couper plus.',
   },
   fertile: {
@@ -234,7 +234,7 @@ export const PLATES: Record<GuidePhase, PlateDef> = {
       'Fruits et légumes colorés (fruits rouges, poivron, kiwi)',
       'De l’eau, régulièrement',
     ],
-    limit: ['Alcool', 'Plus de 3 cafés', 'Une journée trop basse en calories'],
+    limit: ['Alcool', 'Plus de 4 tasses de thé (théine)', 'Une journée trop basse en calories'],
     ideas: [
       idea('salade-pois-chiches', 'Salade pois chiches, avocat, tomate', ['pois-chiches-cuits', 'avocat', 'tomate'], { grams: [150, 75, 120], slot: 'dejeuner', why: 'Folates et fibres', lavageOk: true }),
       idea('saumon-asperges', 'Saumon, asperges, riz complet', ['saumon-cuit', 'asperges', 'riz-complet-cuit'], { grams: [125, 100, 120], slot: 'diner', why: 'Oméga-3 et folates' }),
@@ -254,14 +254,14 @@ export const PLATES: Record<GuidePhase, PlateDef> = {
       'Magnésium (amandes, chocolat noir, banane)',
       '+0,5 L d’eau',
     ],
-    limit: ['Sel, qui favorise la rétention', 'Café après 14 h : le sommeil est souvent plus léger en fin de cycle', 'Alcool'],
+    limit: ['Sel, qui favorise la rétention', 'Thé après 14 h : le sommeil est souvent plus léger en fin de cycle, passe aux tisanes', 'Alcool'],
     ideas: [
       idea('skyr-chia', 'Collation 16 h : skyr + 1 c. à soupe de chia', ['skyr-nature', 'graines-de-chia'], { grams: [150, 12], slot: 'collation', why: 'Protéines + fibres : tient jusqu’au dîner', lavageOk: true }),
       idea('patate-poulet', 'Patate douce, poulet, brocoli', ['patate-douce-cuite', 'blanc-de-poulet-cuit', 'brocoli-cuit'], { grams: [150, 130, 150], slot: 'dejeuner', why: 'Glucides complets qui calent', lavageOk: true }),
       idea('veloute-oeuf', 'Velouté de potiron, œuf, pain complet', ['veloute-de-potiron', 'oeuf', 'pain-complet'], { grams: [300, 55, 35], slot: 'diner', why: 'Chaud, léger, rassasiant' }),
       idea('lentilles-oeuf', 'Lentilles, carottes, œuf dur', ['lentilles-cuites', 'carottes-cuites', 'oeuf'], { grams: [150, 150, 55], slot: 'dejeuner', why: 'Fibres et protéines végétales', lavageOk: true }),
     ],
-    ttc: 'Zéro alcool tant que tu ne sais pas. Café 2 tasses max. Pas de sauna ni de bain très chaud. Les folates continuent.',
+    ttc: 'Zéro alcool tant que tu ne sais pas. Thé : 4 tasses max, tisanes à volonté. Pas de sauna ni de bain très chaud. Les folates continuent.',
     weight: 'La balance peut monter avec l’eau : on regarde la moyenne 7 j. Le bonus est déjà dans ton budget.',
   },
   premenstruel: {
@@ -274,7 +274,7 @@ export const PLATES: Record<GuidePhase, PlateDef> = {
       'Aliments riches en eau (concombre, soupe)',
       'Protéines au goûter',
     ],
-    limit: ['Sel (plats préparés, charcuterie, chips)', 'Le sucré en libre-service : sors ta portion', 'Alcool', 'Café en excès'],
+    limit: ['Sel (plats préparés, charcuterie, chips)', 'Le sucré en libre-service : sors ta portion', 'Alcool', 'Trop de thé (théine)'],
     ideas: [
       idea('banane-amandes', 'Banane + 10 amandes', ['banane', 'amandes'], { grams: [120, 12], slot: 'collation', why: 'Magnésium et B6 pour la fringale' }),
       idea('fromage-blanc-choco', 'Fromage blanc 0 %, cannelle, 1 carré de chocolat noir', ['fromage-blanc-0-pct', 'chocolat-noir-70-pct'], { grams: [150, 5], slot: 'collation', why: 'Le goût du dessert, avec du calcium', lavageOk: true }),
@@ -291,7 +291,7 @@ export const PLATES: Record<GuidePhase, PlateDef> = {
     limit: [
       'Alcool',
       'Un déficit agressif',
-      'Plus de 2 cafés',
+      'Plus de 3–4 tasses de thé',
       'Par précaution : cru et lait cru (sushis, saumon fumé, huîtres, fromages au lait cru)',
     ],
     ideas: [
@@ -316,7 +316,7 @@ export const PLATES: Record<GuidePhase, PlateDef> = {
       'Alcool : zéro',
       'Lait cru et fromages au lait cru',
       'Viande, poisson et œufs crus ou peu cuits ; saumon fumé, sushis, huîtres, charcuterie crue, foie',
-      'Café 2 tasses max ; gros poissons prédateurs (espadon, thon frais)',
+      'Thé : 3–4 tasses max (théine), tisanes ok sauf réglisse et grandes quantités de sauge ; gros poissons prédateurs (espadon, thon frais)',
     ],
     ideas: [
       idea('g-saumon-quinoa', 'Saumon bien cuit, quinoa, brocoli', ['saumon-cuit', 'quinoa-cuit', 'brocoli-cuit'], { grams: [125, 150, 150], slot: 'diner', why: 'Oméga-3, bien cuit', lavageOk: true }),
@@ -334,8 +334,8 @@ const ALL: 'all' = 'all';
 export const REGULATION: RegulationTipDef[] = [
   { id: 'light-am', title: '10 min de lumière dehors', detail: 'avant 10 h, même nuageux', moments: ['matin'], phases: ALL, boost: ['shortSleep'], habitKey: 'light', action: 'habit:light', priority: 5,
     why: 'La lumière du jour tôt le matin aide à caler l’horloge interne : l’endormissement du soir est souvent plus facile.' },
-  { id: 'coffee-cap', title: 'Café avant 14 h', detail: '2 tasses max aujourd’hui', moments: ['matin'], phases: ALL, boost: ['shortSleep', 'ttc'], habitKey: 'coffee', action: 'habit:coffee', priority: 4,
-    why: 'La caféine reste longtemps dans le corps : la limiter tôt protège la nuit suivante. En essai bébé, 2 à 3 tasses max sont conseillées.' },
+  { id: 'coffee-cap', title: 'Thé avant 14 h', detail: 'ensuite, tisanes à volonté', moments: ['matin'], phases: ALL, boost: ['shortSleep', 'ttc'], habitKey: 'coffee', action: 'habit:coffee', priority: 4,
+    why: 'La théine du thé, c’est de la caféine : elle reste longtemps dans le corps. La garder pour le matin protège ta nuit. En essai bébé, environ 4 tasses de thé max par jour.' },
   { id: 'breakfast-prot', title: 'Petit-déj protéiné', detail: 'la faim monte souvent après une nuit courte', moments: ['matin'], phases: ALL, boost: ['shortSleep'], habitKey: 'breakfast', action: 'habit:breakfast', priority: 2,
     why: 'Des protéines le matin aident à tenir jusqu’au midi et limitent les fringales de l’après-midi.' },
   { id: 'breathe', title: 'Respirer 5 min', detail: 'cohérence cardiaque, 6 respirations par minute', moments: ['matin', 'journee'], phases: ALL, boost: ['highStress'], boostPhases: ['luteale', 'premenstruel'], habitKey: 'coherence', action: 'breathing', priority: 8,

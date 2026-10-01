@@ -23,7 +23,7 @@ import type { CycleGuide, GuideIdea, GuideOptions, GuideTip, Moment } from '../l
 import { cycleLog, hereSentence, openPeriodSheet } from './cycle-calendar';
 import { openFoodSearch, slotForNow } from './food-search';
 import { openBreathing } from './breathing';
-import { cycleRing } from './today-ring';
+import { cycleStrip, cycleLegend } from './cycle-strip';
 import { openLogSheet } from './training';
 import {
   toggleHabit, markDone, popCls, recoveryLevel, recoveryLine, recoveryNumbers, RECOVERY_LABEL, openGarminSheet, lateBlock,
@@ -138,14 +138,13 @@ export function cycleHero(date: string, moment: Moment, ctx: ScreenCtx, guide: G
       ? h('button', { class: 'chip dc-chip-btn', type: 'button', onclick: () => openTestSheet(date) }, 'Faire un test')
       : null;
     return h('section', { class: 'card ux paper dc-hero', 'aria-label': 'Ton cycle' },
-      h('div', { class: 'dc-hero-top' },
-        cycleRing(info, { size: 112, periodLength: cs.periodLength, label: here, legend: true }),
-        h('div', { class: 'dc-hero-text' },
-          h('span', { class: 'eyebrow' }, 'Tu es ici'),
-          h('h2', null, label),
-          h('p', { class: 'italic dc-hero-day' }, when.charAt(0).toUpperCase() + when.slice(1)),
-        ),
+      h('div', { class: 'dc-hero-text' },
+        h('span', { class: 'eyebrow' }, 'Tu es ici'),
+        h('h2', null, info.phase === 'retard' ? label : `J${info.day} · ${label}`),
+        h('p', { class: 'italic dc-hero-day' }, when.charAt(0).toUpperCase() + when.slice(1)),
       ),
+      cycleStrip(date, info),
+      cycleLegend(),
       h('p', { class: 'dc-hero-meaning' }, meaning),
       testBtn,
       recoveryRow(date),
@@ -165,7 +164,6 @@ export function cycleHero(date: string, moment: Moment, ctx: ScreenCtx, guide: G
   return h('section', { class: 'card ux paper dc-hero compact', 'aria-label': 'Ton cycle' },
     h('div', { class: 'dc-hero-row' },
       h('button', { class: 'dc-hero-main', type: 'button', onclick: () => ctx.go('balance'), 'aria-label': `${here} Voir mon cycle` },
-        cycleRing(info, { size: 56, periodLength: cs.periodLength, label: here }),
         h('span', { class: 'info-main' },
           h('span', { class: 'info-title' }, info.phase === 'retard' ? label : `J${info.day} · ${label}`),
           h('span', { class: 'info-detail' }, meaning),
@@ -173,6 +171,7 @@ export function cycleHero(date: string, moment: Moment, ctx: ScreenCtx, guide: G
       ),
       recoveryPill(date),
     ),
+    cycleStrip(date, info, { ends: false }),
     tomorrow ? h('p', { class: 'small dc-hero-tomorrow' }, tomorrow) : null,
   );
 }
@@ -297,7 +296,7 @@ export function plateCard(date: string, moment: Moment, ctx: ScreenCtx, guide: G
         macro('Protéines', eaten.protein, t.protein, 'g'),
         h('div', { class: 'td-water' },
           h('div', { class: 'td-mini' },
-            h('span', { class: 'small', style: 'font-weight:700' }, 'Eau'),
+            h('span', { class: 'small', style: 'font-weight:700' }, 'Eau & tisanes'),
             h('span', { class: 'num small muted' + popCls('water') }, `${fmtKg(water)} / ${fmtKg(t.waterL)} L`),
           ),
           h('div', { class: 'row', style: 'gap:6px' },
@@ -368,8 +367,8 @@ const HABIT_KEYS = new Set(HABITS.map((x) => x.key));
 /** Without cycle content: three pillars that fit the moment. */
 function fallbackTips(moment: Moment, hb: Record<string, boolean>): GuideTip[] {
   const list: Record<Moment, [string, string, string][]> = {
-    matin: [['light', '10 min de lumière dehors', 'avant 10 h, même nuageux'], ['breakfast', 'Petit-déj protéiné', 'pour tenir jusqu’à midi'], ['coffee', 'Café avant 14 h', '2 tasses max aujourd’hui']],
-    journee: [['walk', 'Marche 15 min', 'après le déjeuner, ça compte'], ['me', '10 min pour toi', 'rien à faire, c’est le but'], ['coffee', 'Pas de café après 14 h', 'le sommeil sera souvent meilleur']],
+    matin: [['light', '10 min de lumière dehors', 'avant 10 h, même nuageux'], ['breakfast', 'Petit-déj protéiné', 'pour tenir jusqu’à midi'], ['coffee', 'Thé avant 14 h', 'après, tisanes à volonté']],
+    journee: [['walk', 'Marche 15 min', 'après le déjeuner, ça compte'], ['me', '10 min pour toi', 'rien à faire, c’est le but'], ['coffee', 'Pas de thé après 14 h', 'une tisane à la place']],
     soir: [['screens', 'Écrans off 30 min avant', 'un livre, une tisane'], ['sleep', 'Au lit à heure régulière', 'la meilleure récup, c’est la nuit'], ['me', '10 min pour toi', 'rien à faire, c’est le but']],
   };
   return list[moment].map(([key, title, detail]) => ({
@@ -380,7 +379,7 @@ function fallbackTips(moment: Moment, hb: Record<string, boolean>): GuideTip[] {
 
 const SHORT: Record<string, string> = {
   sleep: 'Sommeil', light: 'Lumière', coherence: 'Respirer', walk: 'Marche',
-  coffee: 'Café < 14 h', screens: 'Écrans off', breakfast: 'Petit-déj', me: 'Moi',
+  coffee: 'Thé < 14 h', screens: 'Écrans off', breakfast: 'Petit-déj', me: 'Moi',
 };
 const CHIP_ORDER: Record<Moment, string[]> = {
   matin: ['light', 'breakfast', 'coffee', 'coherence', 'walk', 'me', 'screens', 'sleep'],

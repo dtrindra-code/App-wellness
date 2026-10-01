@@ -368,7 +368,7 @@ function cortisolCard(): HTMLElement {
       h('li', null, 'Marcher dehors'),
       h('li', null, 'Lever le pied quand tu es épuisée'),
       h('li', null, 'Ne pas sauter de repas'),
-      h('li', null, 'Moins de café l’après-midi'),
+      h('li', null, 'Moins de thé l’après-midi (théine), plutôt des tisanes'),
       h('li', null, 'Peu ou pas d’alcool'),
     ), 'bal-cort-down', 'Replier'),
     disclosure('Ce qui le fait grimper', () => h('ul', { class: 'bal-list small' },
