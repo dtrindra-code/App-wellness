@@ -1139,3 +1139,184 @@ a.btn { text-decoration: none; display: flex; align-items: center; justify-conte
   font: 600 0.85rem/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; text-align: left;
 }
 .garmin-copy { flex: none; padding: 6px 10px; font-size: 0.82rem; min-height: 0; }
+
+/* ---- daily coach v9 ---- */
+/* Today follows the clock: cycle hero first, one coach card, CE MATIN · TA JOURNÉE · CE SOIR.
+   dc-* = daily coach, cr-* = cycle ring. Tokens only. */
+.app { padding-bottom: calc(var(--tabbar-h) + 34px + env(safe-area-inset-bottom, 0px)); }
+.dc-link {
+  background: none; border: 0; padding: 8px 2px; min-height: 40px; cursor: pointer;
+  font: inherit; font-size: 0.9rem; font-weight: 700; color: var(--ink);
+  text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, var(--ink) 35%, transparent);
+}
+.dc-link:active { opacity: 0.7; }
+
+/* cycle ring */
+.cr { flex: none; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.cr-box { position: relative; width: var(--cr-size); height: var(--cr-size); }
+.cr-svg { display: block; overflow: visible; }
+.cr-seg { stroke: var(--line); }
+.cr-seg.ph-regles { stroke: var(--ph-regles); }
+.cr-seg.ph-folliculaire { stroke: color-mix(in srgb, var(--ink) 16%, var(--surface)); }
+.cr-seg.ph-fertile { stroke: var(--ph-fertile); }
+.cr-seg.ph-luteale { stroke: var(--ph-luteale); }
+.cr-seg.ph-premenstruel { stroke: var(--ph-pre); }
+.cr-seg.fut { opacity: 0.45; }
+.cr-ov { stroke: var(--ph-ov); }
+.cr-tail { stroke: var(--pink-deep); }
+.cr-dot { fill: var(--ink); stroke: var(--bg); }
+.cr-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1; pointer-events: none; }
+.cr-day { font-size: calc(var(--cr-size) * 0.22); font-weight: 700; }
+.cr-of { margin-top: 3px; font-size: 0.72rem; color: var(--muted); }
+.cr.mini .cr-day { font-size: 0.86rem; }
+.cr-legend { display: flex; gap: 8px; font-size: 0.7rem; color: var(--muted); }
+.cr-legend span { display: inline-flex; align-items: center; gap: 3px; }
+.cr-key { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.cr-key.ph-regles { background: var(--ph-regles); }
+.cr-key.ph-fertile { background: var(--ph-fertile); }
+.cr-key.ph-luteale { background: var(--ph-luteale); }
+
+/* cycle hero */
+.card.ux.dc-hero { padding: 18px; gap: 14px; background-color: var(--surface); }
+.dc-hero-top { display: flex; align-items: center; gap: 16px; }
+.dc-hero-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.dc-hero-text h2 { font-size: 1.45rem; line-height: 1.1; }
+.dc-hero-day { font-size: 1.1rem; color: var(--muted); }
+.dc-hero-meaning { font-size: 1rem; line-height: 1.4; text-wrap: pretty; }
+.dc-hero-chips { gap: 6px; }
+.dc-hero-chips .chip { font-size: 0.8rem; padding: 4px 10px; }
+.dc-chip-btn { border: 1px solid var(--ink); background: var(--pink); color: var(--pink-ink); font-weight: 700; cursor: pointer; min-height: 32px; }
+.dc-hero-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.dc-hero-foot .btn { min-height: 40px; }
+.dc-rec {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; min-height: 48px;
+  border: 0; border-radius: 14px; cursor: pointer; text-align: left; font: inherit; color: var(--ink);
+  background: color-mix(in srgb, var(--surface-2) 80%, transparent);
+}
+.dc-rec:active { transform: scale(0.99); }
+.dc-rec-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--line); }
+.lvl-basse .dc-rec-dot { background: var(--bad); }
+.lvl-correcte .dc-rec-dot { background: var(--gold); }
+.lvl-bonne .dc-rec-dot { background: var(--good); }
+.dc-rec-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.dc-rec-title { font-weight: 700; font-size: 0.95rem; }
+.dc-rec-detail { font-size: 0.82rem; color: var(--muted); font-weight: 500; }
+.dc-coach .dc-rec { background: var(--surface); }
+.card.ux.dc-hero.compact { padding: 12px 14px; gap: 8px; }
+.dc-hero-row { display: flex; align-items: center; gap: 8px; }
+.dc-hero-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; padding: 0; border: 0; background: none; text-align: left; font: inherit; color: var(--ink); cursor: pointer; }
+.dc-hero-main .info-detail { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.dc-pill {
+  flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 4px 10px;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--ink);
+  font: inherit; font-size: 0.76rem; font-weight: 700; cursor: pointer; white-space: nowrap;
+}
+.dc-hero-tomorrow { padding-left: 68px; color: var(--muted); }
+
+/* the one coach card */
+.dc-q { font-family: var(--font-display); font-weight: 700; font-size: 1rem; text-align: center; }
+.dc-coach .coach-mood { background: var(--surface); }
+.dc-coach .coach-mood:active { background: var(--surface-2); }
+.dc-coach .coach-face-bg { fill: var(--pink); }
+.dc-coach .dc-link { color: var(--pink-ink); }
+.dc-coach .coach-note { background: var(--surface); }
+.dc-row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.dc-row2 .btn { min-height: 46px; background: var(--surface); }
+
+/* moments */
+.sec-title.dc-sec { margin-top: 6px; }
+.card.ux.dc-sum {
+  flex-direction: row; align-items: center; gap: 12px; padding: 12px 14px; width: 100%;
+  text-align: left; font: inherit; color: var(--ink); cursor: pointer;
+}
+.card.ux.dc-sum:active { transform: scale(0.99); }
+.dc-sum-text { flex: 1; min-width: 0; font-size: 0.92rem; line-height: 1.35; }
+.dc-sum-chev { flex: none; font-size: 1.2rem; color: var(--muted); line-height: 1; }
+.dc-fold { align-self: center; background: none; border: 0; padding: 6px 14px; min-height: 36px; font: inherit; font-size: 0.85rem; color: var(--muted); cursor: pointer; }
+
+/* plate */
+.dc-plate-lead { font-family: var(--font-display); font-weight: 700; font-size: 1.12rem; text-align: center; }
+.dc-plate-guide { display: flex; flex-direction: column; gap: 4px; padding-top: 12px; border-top: 1px solid var(--line); }
+.dc-plate-guide h3 { font-size: 1.08rem; }
+.dc-ideas { display: flex; flex-direction: column; gap: 8px; }
+.dc-idea {
+  display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 10px 10px 14px; min-height: 52px;
+  border: 0; border-radius: 14px; background: var(--surface-2); color: var(--ink); font: inherit; text-align: left; cursor: pointer;
+}
+.dc-idea:active { transform: scale(0.99); }
+.dc-idea-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.dc-idea-name { font-weight: 700; font-size: 0.93rem; line-height: 1.25; }
+.dc-idea-sub { font-size: 0.8rem; color: var(--muted); font-weight: 500; }
+.dc-idea-add { flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: var(--ink); color: var(--bg); font-size: 1.25rem; font-weight: 700; line-height: 1; }
+
+/* regulation */
+.dc-reg-list { display: flex; flex-direction: column; gap: 8px; }
+.dc-act-wrap { display: flex; align-items: center; gap: 6px; }
+.dc-act {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; padding: 10px 12px; min-height: 54px;
+  border: 0; border-radius: 14px; background: var(--surface-2); color: var(--ink); font: inherit; text-align: left;
+}
+.dc-act.tap { cursor: pointer; }
+.dc-act.tap:active { transform: scale(0.99); }
+.dc-act.on { background: color-mix(in srgb, var(--pink) 45%, var(--surface)); }
+.dc-reg .dc-act.on .dc-act-title { text-decoration: line-through; text-decoration-thickness: 1px; text-decoration-color: color-mix(in srgb, var(--ink) 45%, transparent); }
+.dc-act .icon-circle.dc-act-ic { width: 30px; height: 30px; background: var(--surface); }
+.dc-act .icon-circle.dc-act-ic svg { width: 18px; height: 18px; }
+.dc-act .btn.sm { flex: none; }
+.dc-box { flex: none; width: 28px; height: 28px; border-radius: 50%; border: 2px solid var(--ink); display: grid; place-items: center; font-size: 0.9rem; font-weight: 700; background: var(--surface); }
+.dc-box.on { background: var(--ink); color: var(--bg); }
+.dc-box.tip { width: 10px; height: 10px; margin: 0 9px; border: 0; background: var(--ink); opacity: 0.5; }
+.dc-act-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.dc-act-title { font-weight: 700; font-size: 0.95rem; line-height: 1.25; }
+.dc-act-detail { font-size: 0.82rem; color: var(--muted); line-height: 1.3; }
+.dc-why {
+  flex: none; width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface);
+  color: var(--muted); font-family: var(--font-italic); font-style: italic; font-size: 0.95rem; cursor: pointer;
+}
+.dc-dots { display: inline-flex; gap: 3px; vertical-align: middle; margin-right: 2px; }
+.dc-dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--line); }
+.dc-dots i.on { background: var(--ink); }
+.dc-pillars { display: flex; flex-direction: column; gap: 8px; padding: 12px 0 14px; border-top: 1px solid var(--line); }
+.dc-pillars-head { display: flex; align-items: center; gap: 8px; }
+.dc-pillars-head .eyebrow { flex: 1; }
+.dc-pillars-head .dc-link { min-height: 32px; padding: 4px 2px; font-size: 0.82rem; }
+.dc-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.dc-chip {
+  display: inline-flex; align-items: center; gap: 5px; min-height: 36px; padding: 6px 12px;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--ink);
+  font: inherit; font-size: 0.84rem; cursor: pointer;
+}
+.dc-chip.on { background: var(--pink); border-color: var(--ink); color: var(--pink-ink); font-weight: 700; }
+.dc-check-mark { font-size: 0.8rem; }
+
+/* tomorrow, footer */
+.card.ux.dc-tomorrow { gap: 10px; padding-bottom: 14px; }
+.dc-foot-link { align-self: center; background: none; border: 0; padding: 8px 12px; min-height: 40px; font: inherit; font-size: 0.82rem; color: var(--muted); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.dc-weigh .row.between { margin-top: -6px; }
+
+/* feedback: the control just changed pops once */
+@keyframes dc-pop { 0% { transform: scale(1); } 50% { transform: scale(1.12); } 100% { transform: scale(1); } }
+.pop { animation: dc-pop 180ms ease-out; }
+
+/* Équilibre: same ring, larger */
+.card.ux.bal-cyc { background-color: var(--surface); }
+.bal-cyc-top { display: flex; align-items: center; gap: 16px; }
+.bal-cyc-top .bal-here-text h2 { font-size: 1.4rem; }
+.bal-cyc-meaning { font-family: var(--font-display); font-weight: 700; font-size: 1.02rem; line-height: 1.3; }
+.bal-tab-body { padding: 2px 2px 4px; }
+@media (max-width: 360px) {
+  .dc-hero-top, .bal-cyc-top { gap: 12px; }
+  .dc-hero-tomorrow { padding-left: 0; }
+}
+.td-actions.dc-two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.dc-chips { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.dc-chip { justify-content: center; padding: 6px 4px; font-size: 0.8rem; white-space: nowrap; }
+.dc-weigh .icon-circle { flex: none; }
+.dc-weigh .input { min-width: 0; }
+.dc-hero .dc-chip-btn { align-self: flex-start; padding: 6px 14px; font-size: 0.85rem; }
+.dc-hero-day { font-size: 1rem; }
+.dc-coach .coach-foot { padding-top: 6px; }
+.dc-coach .coach-slip-btn { background: none; border: 0; padding: 6px 2px; min-height: 36px; font-weight: 700; text-decoration: underline; text-underline-offset: 3px; color: var(--pink-ink); }
+.dc-reg-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+/* ---- /daily coach v9 ---- */

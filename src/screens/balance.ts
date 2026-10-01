@@ -1,28 +1,39 @@
-// "Équilibre": cycle + lifestyle (sleep, stress, cortisol), in sections:
-// TON CYCLE ("tu es ici" first) · TON SUIVI (folded calendar) · TES PILIERS ·
-// RESPIRER · TES CHIFFRES (Garmin form folded, insights) · STRESS ET CORTISOL.
+// "Équilibre": the reference page for the cycle and lifestyle (sleep, stress, cortisol).
+// The daily actions (pillars, breathing, recovery, symptoms) live on Aujourd'hui; here:
+// TON CYCLE (same ring as the Today hero, then Assiette · Régulation · Sport for the phase)
+// · TES PILIERS (full list + why) · TA RÉCUP (Garmin + what the numbers say) · RESPIRER
+// · TON SUIVI (calendar) · STRESS ET CORTISOL.
 
 import type { Screen, ScreenCtx } from './types';
-import type { GarminField, Profile, Wellbeing } from '../types';
+import type { Profile } from '../types';
 import { store } from '../store';
 import {
-  h, gearIcon, screenTitle, heartSticker, field, parseNum, toast, fmtInt,
-  sectionTitle, actionLink, infoRow, iconCircle, disclosure, keyBubble, ICON,
+  h, gearIcon, screenTitle, heartSticker, toast, segmented,
+  sectionTitle, infoRow, iconCircle, disclosure, keyBubble, ICON,
 } from '../lib/ui';
-import { today, addDays, daysBetween, fmtShort, fmtDayMonth, fmtLong, mondayOf } from '../lib/dates';
-import { cycleOn, cycleSettings, cycleModel, positionOn, adviceFor, phaseLabel, TTC_TIPS, PREGNANCY_NOTE } from '../lib/cycle';
+import { today, daysBetween, fmtDayMonth, fmtLong, mondayOf } from '../lib/dates';
+import { cycleOn, cycleSettings, adviceFor, phaseLabel, TTC_TIPS, PREGNANCY_NOTE } from '../lib/cycle';
 import type { CycleInfo } from '../lib/cycle';
-import { cycleLog, hereSentence, openPeriodSheet, toggleChip, trackCard, updateCycle } from './cycle-calendar';
+import { cycleLog, hereSentence, openPeriodSheet, trackCard } from './cycle-calendar';
 import {
-  HABITS, habitScore, weekHabitStats, recoveryFlag, sleepWeightInsight, recentWellbeing,
+  HABITS, habitScore, weekHabitStats, sleepWeightInsight, recentWellbeing,
   COHERENCE_TARGET,
 } from '../lib/habits';
 import { openBreathing } from './breathing';
+import { slotForNow } from './food-search';
+import { cycleRing } from './today-ring';
+import { guideSafe, openIdeaSheet } from './today-guide';
+import {
+  garminForm, lateBlock, toggleHabit, popCls, recoveryLevel, recoveryLine, RECOVERY_LABEL, GFIELDS, fmtGVal,
+} from './today-shared';
 
 // ---------- transient UI state ----------
 /** Habit keys whose "why" is unfolded. */
 const whyOpen = new Set<string>();
 let confirmPregnancyOff = false;
+/** Tab of the cycle card. */
+type CycTab = 'plate' | 'reg' | 'sport';
+let cycTab: CycTab = 'plate';
 
 const WEEK_LETTERS = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
 
@@ -34,15 +45,15 @@ export const renderBalance: Screen = (root, ctx) => {
 
   root.append(header(date, ctx, info));
   if (cs.tracking) {
-    root.append(sectionTitle(cs.pregnant ? 'Ta grossesse' : 'Ton cycle'), cs.pregnant ? pregnancyCard(date) : cycleCard(date, p, info));
-    if (!cs.pregnant) root.append(sectionTitle('Ton suivi'), trackCard(date));
+    root.append(sectionTitle(cs.pregnant ? 'Ta grossesse' : 'Ton cycle'), cs.pregnant ? pregnancyCard(date) : cycleCard(date, p, info, ctx));
   }
   root.append(
     sectionTitle('Tes piliers'), pillarsCard(date),
+    sectionTitle('Ta récup'), recoveryCard(date),
     sectionTitle('Respirer'), breathingCard(date),
-    sectionTitle('Tes chiffres'), garminCard(date), insightsCard(date),
-    sectionTitle('Stress et cortisol'), cortisolCard(),
   );
+  if (cs.tracking && !cs.pregnant) root.append(sectionTitle('Ton suivi'), trackCard(date));
+  root.append(sectionTitle('Stress et cortisol'), cortisolCard());
 };
 
 // ---------- header ----------
@@ -63,61 +74,110 @@ function header(date: string, ctx: ScreenCtx, info: CycleInfo | null): HTMLEleme
 
 // ---------- 1. cycle ----------
 
-function cycleCard(date: string, p: Profile, info: CycleInfo | null): HTMLElement {
+function cycleCard(date: string, p: Profile, info: CycleInfo | null, ctx: ScreenCtx): HTMLElement {
   const cs = cycleSettings(p);
 
   if (!info) {
     return h('section', { class: 'card ux solo' },
       infoRow({ icon: ICON.cycle, title: 'Ton cycle', detail: 'Note le 1er jour de tes dernières règles : l’app estimera ta phase, ton ovulation et tes prochaines règles.' }),
       h('button', { class: 'btn primary block bal-big', type: 'button', onclick: () => openPeriodSheet(date, true) }, 'Noter mes dernières règles'),
-      disclosure('Noter aujourd’hui', () => cycleLog(date, { title: null, explicit: false }), 'bal-log'),
+      disclosure('Noter aujourd’hui', () => cycleLog(date, { title: null, explicit: false }), 'bal-log', 'Fermer le suivi du jour'),
     );
   }
 
   const adv = adviceFor(info, p, date);
-  const card = h('section', { class: 'card ux' },
-    // "Tu es ici" first: the day in a bubble, the phase and the sentence.
-    h('div', { class: 'bal-here' },
-      keyBubble(`J${info.day}`, undefined, `sur ~${info.length}`),
+  const guide = guideSafe(date, { tips: 4, ideas: 4 });
+  const here = hereSentence(date, info);
+
+  const tabBody = (): HTMLElement => {
+    if (cycTab === 'plate') {
+      const n = guide?.nutrition;
+      if (!n) return h('p', { class: 'small' }, adv.food);
+      return h('div', { class: 'stack', style: 'gap:10px' },
+        h('h3', null, n.title),
+        h('p', { class: 'small' }, n.why),
+        n.favour.length ? h('div', { class: 'stack', style: 'gap:4px' }, h('span', { class: 'eyebrow' }, 'À privilégier'), h('ul', { class: 'bal-list small' }, n.favour.map((x) => h('li', null, x)))) : null,
+        n.limit.length ? h('div', { class: 'stack', style: 'gap:4px' }, h('span', { class: 'eyebrow' }, 'À limiter'), h('ul', { class: 'bal-list small' }, n.limit.map((x) => h('li', null, x)))) : null,
+        n.ideas.length
+          ? h('div', { class: 'stack', style: 'gap:6px' },
+              h('span', { class: 'eyebrow' }, 'Des idées'),
+              h('div', { class: 'dc-ideas' }, n.ideas.map((i) => h('button', { class: 'dc-idea', type: 'button', 'aria-label': `Ajouter ${i.name}`, onclick: () => openIdeaSheet(date, i, slotForNow()) },
+                h('span', { class: 'dc-idea-main' }, h('span', { class: 'dc-idea-name' }, i.name),
+                  i.kcal !== undefined ? h('span', { class: 'dc-idea-sub num' }, `${Math.round(i.kcal)} kcal${i.protein !== undefined ? ` · ${Math.round(i.protein)} g prot.` : ''}`) : null),
+                h('span', { class: 'dc-idea-add', 'aria-hidden': 'true' }, '+')))))
+          : null,
+        n.ttcNote ? h('p', { class: 'small' }, h('strong', null, cs.ttc ? 'Essai bébé : ' : 'Bon à savoir : '), n.ttcNote) : null,
+        n.weight ? h('p', { class: 'small muted' }, n.weight) : null,
+      );
+    }
+    if (cycTab === 'reg') {
+      const tips = guide?.regulate ?? [];
+      if (!tips.length) return h('p', { class: 'small' }, adv.body);
+      return h('div', { class: 'stack', style: 'gap:10px' },
+        tips.map((tp) => infoRow({ icon: tp.action === 'breathing' ? ICON.wave : tp.action === 'sleep' ? ICON.moon : ICON.leaf, title: tp.title, detail: tp.why ?? tp.detail })),
+        h('p', { class: 'small muted' }, 'À cocher au fil de la journée sur Aujourd’hui.'),
+      );
+    }
+    return h('div', { class: 'stack', style: 'gap:10px' },
+      h('p', { class: 'small' }, adv.sport),
+      h('p', { class: 'small muted' }, adv.weight),
+    );
+  };
+  const tabSlot = h('div', { class: 'bal-tab-body' });
+  const tabsSlot = h('div');
+  const paintTabs = () => {
+    tabsSlot.replaceChildren(segmented<CycTab>([
+      { value: 'plate', label: 'Assiette' }, { value: 'reg', label: 'Régulation' }, { value: 'sport', label: 'Sport' },
+    ], cycTab, (v) => { cycTab = v; paintTabs(); }));
+    tabSlot.replaceChildren(tabBody());
+  };
+  paintTabs();
+
+  const card = h('section', { class: 'card ux paper bal-cyc' },
+    // Same ring as the Today hero, bigger: one marker for "tu es ici".
+    h('div', { class: 'bal-cyc-top' },
+      cycleRing(info, { size: 150, periodLength: cs.periodLength, label: here, legend: true }),
       h('div', { class: 'bal-here-text' },
         h('span', { class: 'eyebrow' }, 'Tu es ici'),
-        h('h2', null, phaseLabel(info.phase)),
-        h('p', { class: 'small' }, hereSentence(date, info)),
+        h('h2', null, guide?.label ?? phaseLabel(info.phase)),
+        h('p', { class: 'italic' }, guide?.dayLabel ?? `J${info.day} sur ~${info.length}`),
       ),
     ),
-    cycleStrip(date, info),
+    h('p', { class: 'small' }, here),
+    h('p', { class: 'bal-cyc-meaning' }, guide?.meaning ?? adv.headline),
     disclosure('Voir les dates', () => [
       h('div', { class: 'grid-3 bal-dates' },
-        stat('Prochaines règles', fmtDayMonth(info.nextPeriod)),
-        stat(info.ovulationFromLH ? 'Ovulation (test LH)' : 'Ovulation', fmtDayMonth(info.ovulation)),
+        stat('Prochaines règles', `~${fmtDayMonth(info.nextPeriod)}`),
+        stat(info.ovulationFromLH ? 'Ovulation (test LH)' : 'Ovulation', `${info.ovulationFromLH ? '' : '~'}${fmtDayMonth(info.ovulation)}`),
         stat('Fenêtre fertile', `${fmtDayMonth(info.fertileStart)} – ${fmtDayMonth(info.fertileEnd)}`),
       ),
       legendRow(),
       h('p', { class: 'small muted' }, 'Dates estimées d’après tes cycles notés : chaque cycle peut varier.'),
-    ], 'bal-dates'),
-    h('div', { class: 'stack', style: 'gap:4px' },
-      h('h3', null, adv.headline),
-      h('p', { class: 'small muted' }, adv.body),
-    ),
-    h('div', { class: 'stack bal-advice', style: 'gap:8px' },
-      infoRow({ icon: ICON.wave, title: 'Sport', detail: adv.sport }),
-      infoRow({ icon: ICON.fork, title: 'Assiette', detail: adv.food }),
-      infoRow({ icon: ICON.scale, title: 'Balance', detail: adv.weight }),
-    ),
+    ], 'bal-dates', 'Replier'),
+    tabsSlot,
+    tabSlot,
   );
 
-  if (info.phase === 'retard') card.append(lateBlock(date, info));
+  if (info.phase === 'retard') {
+    const late = h('div');
+    const paintLate = () => late.replaceChildren(lateBlock(date, info, paintLate));
+    paintLate();
+    card.append(late);
+  }
 
   const posTest = Object.values(store.state.days).some((d) => d.date >= info.cycleStart && d.date <= date && d.cycle?.pregnancyTest === 'pos');
   if (posTest) card.append(pregnancyOffer(date));
 
   if (cs.ttc) {
-    card.append(disclosure('Essai bébé : les repères', () => h('ul', { class: 'bal-list small' }, TTC_TIPS.map((t) => h('li', null, t))), 'bal-ttc'));
+    card.append(disclosure('Essai bébé : les repères', () => h('ul', { class: 'bal-list small' }, TTC_TIPS.map((x) => h('li', null, x))), 'bal-ttc', 'Replier'));
   }
 
   card.append(
-    disclosure('Noter aujourd’hui', () => cycleLog(date, { title: null, explicit: false }), 'bal-log', 'Fermer'),
-    actionLink('Début de règles un autre jour', () => openPeriodSheet(date, false)),
+    disclosure('Noter aujourd’hui', () => cycleLog(date, { title: null, explicit: false }), 'bal-log', 'Fermer le suivi du jour'),
+    h('div', { class: 'row between' },
+      h('button', { class: 'dc-link', type: 'button', onclick: () => openPeriodSheet(date, false) }, 'Début de règles un autre jour'),
+      h('button', { class: 'dc-link', type: 'button', onclick: () => ctx.go('today') }, 'Mes actions du jour ›'),
+    ),
   );
   return card;
 }
@@ -126,61 +186,15 @@ function stat(label: string, value: string): HTMLElement {
   return h('div', { class: 'stat' }, h('span', { class: 'label' }, label), h('span', { class: 'num small', style: 'font-weight:500' }, value));
 }
 
-function cycleStrip(date: string, info: CycleInfo): HTMLElement {
-  const m = cycleModel(date, store.profile, store.state.days);
-  const n = Math.min(60, Math.max(daysBetween(info.cycleStart, info.nextPeriod), info.day));
-  const cells: HTMLElement[] = [];
-  for (let i = 0; i < n; i++) {
-    const d = addDays(info.cycleStart, i);
-    const ph = positionOn(m, d)?.phase ?? 'retard';
-    const cls = ['bal-cell', `ph-${ph}`];
-    if (d === date) cls.push('today');
-    if (d > date) cls.push('fut');
-    if (d === info.ovulation) cls.push('ov');
-    cells.push(h('span', { class: cls.join(' '), title: `${fmtShort(d)} · ${phaseLabel(ph)}${d > date ? ' (prévu)' : ''}` }));
-  }
-  // "Aujourd'hui" marker: label above, caret pointing at today's cell.
-  const idx = info.day - 1;
-  const center = ((idx + 0.5) / n) * 100;
-  const align = center < 22 ? 'start' : center > 78 ? 'end' : 'mid';
-  return h('div', { class: 'stack', style: 'gap:6px' },
-    h('div', { class: 'cc-here', 'aria-hidden': 'true' },
-      h('span', { class: `cc-here-label ${align}`, style: `left:${center}%` }, `Aujourd’hui · J${info.day}`),
-      h('span', { class: 'cc-here-caret', style: `left:${center}%` }),
-    ),
-    h('div', { class: 'bal-strip', role: 'img', 'aria-label': `Cycle en cours : tu es au jour ${info.day} sur environ ${info.length}` }, cells),
-    h('div', { class: 'cc-strip-ends small muted num', 'aria-hidden': 'true' },
-      h('span', null, `J1 · ${fmtDayMonth(info.cycleStart)}`),
-      h('span', null, `règles ~${fmtDayMonth(info.nextPeriod)}`),
-    ),
-  );
-}
-
 function legendRow(): HTMLElement {
   return h('div', { class: 'w-legend' },
-    legend('ph-regles', 'Règles'), legend('ph-fertile', 'Fertile'), legend('ph-luteale', 'Lutéale'), legend('ph-premenstruel', 'Avant règles'),
-    h('span', null, h('i', { class: 'bal-cell bal-key ph-luteale fut' }), 'Plus clair : prévu'),
+    legend('ph-regles', 'Règles'), legend('ph-fertile', 'Fertile'), legend('ph-luteale', 'Lutéale'), legend('ph-premenstruel', 'Avant les règles'),
+    h('span', null, h('i', { class: 'bal-cell bal-key ph-luteale fut' }), 'Plus clair : estimé'),
   );
 }
 
 function legend(cls: string, label: string): HTMLElement {
   return h('span', null, h('i', { class: `bal-cell bal-key ${cls}` }), label);
-}
-
-function lateBlock(date: string, info: CycleInfo): HTMLElement {
-  const test = store.getDay(date).cycle?.pregnancyTest;
-  return h('div', { class: 'stack bal-sub', style: 'gap:8px' },
-    h('h3', null, 'Faire un test'),
-    h('p', { class: 'small' },
-      info.lateBy >= 1
-        ? 'Un test urinaire est fiable dès le jour des règles attendues. Le matin, avec les premières urines, c’est le plus sûr. Négatif et toujours rien dans 3 jours : refais-en un.'
-        : 'Tes règles sont attendues aujourd’hui. Si rien demain, un test urinaire est déjà fiable.'),
-    h('div', { class: 'row wrap', style: 'gap:6px' },
-      h('span', { class: 'small muted' }, 'Test du jour :'),
-      toggleChip('Négatif', test === 'neg', () => updateCycle(date, (c) => { c.pregnancyTest = test === 'neg' ? undefined : 'neg'; })),
-      toggleChip('Positif', test === 'pos', () => updateCycle(date, (c) => { c.pregnancyTest = test === 'pos' ? undefined : 'pos'; })),
-    ),
-  );
 }
 
 function pregnancyOffer(date: string): HTMLElement {
@@ -231,11 +245,7 @@ function pillarsCard(date: string): HTMLElement {
   const score = habitScore(day);
   const week = weekHabitStats(store.state.days, mondayOf(date));
 
-  const toggle = (key: string) => void store.updateDay(date, (d) => {
-    const hb = { ...(d.habits ?? {}) };
-    if (hb[key]) delete hb[key]; else hb[key] = true;
-    d.habits = hb;
-  });
+  const toggle = (key: string) => toggleHabit(date, key);
 
   return h('section', { class: 'card ux solo bal-pillars' },
     heartSticker('bal-heart'),
@@ -249,7 +259,7 @@ function pillarsCard(date: string): HTMLElement {
         const on = !!day.habits?.[hb.key];
         const open = whyOpen.has(hb.key);
         return h('div', { class: 'bal-habit' + (on ? ' on' : '') },
-          h('button', { class: 'bal-check' + (on ? ' on' : ''), type: 'button', 'aria-pressed': on ? 'true' : 'false', 'aria-label': hb.label, onclick: () => toggle(hb.key) }, on ? '✓' : ''),
+          h('button', { class: 'bal-check' + (on ? ' on' : '') + popCls(`hb-${hb.key}`), type: 'button', 'aria-pressed': on ? 'true' : 'false', 'aria-label': hb.label, onclick: () => toggle(hb.key) }, on ? '✓' : ''),
           h('div', { class: 'main' },
             h('button', {
               class: 'bal-label', type: 'button', 'aria-expanded': open ? 'true' : 'false',
@@ -295,126 +305,50 @@ function breathingCard(date: string): HTMLElement {
   );
 }
 
-// ---------- 4. Garmin ----------
-
-interface GField { key: GarminField; label: string; unit: string; min: number; max: number; decimal: boolean; ph: string }
-const GFIELDS: GField[] = [
-  { key: 'sleepH', label: 'Sommeil', unit: 'h', min: 0, max: 16, decimal: true, ph: 'ex. 7,5' },
-  { key: 'bodyBattery', label: 'Body Battery', unit: '', min: 0, max: 100, decimal: false, ph: 'ex. 65' },
-  { key: 'stress', label: 'Stress moyen', unit: '', min: 0, max: 100, decimal: false, ph: 'ex. 30' },
-  { key: 'restingHr', label: 'FC repos', unit: 'bpm', min: 30, max: 120, decimal: false, ph: 'ex. 60' },
-  { key: 'steps', label: 'Pas', unit: '', min: 0, max: 100000, decimal: false, ph: 'ex. 8000' },
-];
-
-const fmtVal = (f: GField, v: number | undefined) =>
-  v === undefined ? '' : f.decimal ? String(v).replace('.', ',') : f.key === 'steps' ? fmtInt(v) : String(v);
-
-function garminCard(date: string): HTMLElement {
-  const wb = store.getDay(date).wellbeing ?? {};
-  const yWb = store.getDay(addDays(date, -1)).wellbeing ?? {};
-  const inputs = new Map<keyof Wellbeing, HTMLInputElement>();
-  const err = h('p', { class: 'small tone-bad', role: 'alert' });
-
-  const grid = h('div', { class: 'grid-2' },
-    GFIELDS.map((f) => {
-      const input = h('input', {
-        type: 'text', inputMode: f.decimal ? 'decimal' : 'numeric', placeholder: f.ph,
-        value: fmtVal(f, wb[f.key] as number | undefined).replace(/\s/g, ''),
-      });
-      inputs.set(f.key, input);
-      const y = yWb[f.key] as number | undefined;
-      return field(f.unit ? `${f.label} (${f.unit})` : f.label, input, y !== undefined ? `Hier : ${fmtVal(f, y)}` : undefined);
-    }),
-  );
-
-  function save() {
-    const next: Wellbeing = { ...wb };
-    const manual = new Set<GarminField>(wb.manual ?? []);
-    for (const f of GFIELDS) {
-      const raw = inputs.get(f.key)!.value.replace(/\s/g, '');
-      if (!raw) {
-        if (next[f.key] !== undefined) manual.add(f.key);
-        delete next[f.key];
-        continue;
-      }
-      const v = parseNum(raw);
-      if (v === undefined || v < f.min || v > f.max) { err.textContent = `${f.label} : entre ${f.min} et ${fmtInt(f.max)}.`; return; }
-      next[f.key] = f.decimal ? Math.round(v * 10) / 10 : Math.round(v);
-      // Changed by hand: the Garmin import won't overwrite it anymore.
-      if (next[f.key] !== wb[f.key]) manual.add(f.key);
-    }
-    if (manual.size) next.manual = [...manual];
-    err.textContent = '';
-    (document.activeElement as HTMLElement | null)?.blur();
-    void store.updateDay(date, (d) => {
-      d.wellbeing = next;
-      // Numbers that clearly meet a pillar tick it (never untick).
-      const hb = { ...(d.habits ?? {}) };
-      if ((next.sleepH ?? 0) >= 7) hb.sleep = true;
-      if ((next.steps ?? 0) >= 8000) hb.walk = true;
-      d.habits = hb;
-    });
-    toast('Chiffres enregistrés');
-  }
-
-  const shown = GFIELDS.filter((f) => wb[f.key] !== undefined).slice(0, 3);
-  const fromGarmin = wb.source === 'garmin' && GFIELDS.some((f) => wb.garmin?.[f.key] !== undefined && wb[f.key] === wb.garmin[f.key]);
-  return h('section', { class: 'card ux solo' },
-    infoRow({
-      icon: ICON.battery,
-      title: 'Mes chiffres Garmin',
-      detail: shown.length
-        ? shown.map((f) => `${f.label} ${fmtVal(f, wb[f.key] as number)}${f.unit ? ' ' + f.unit : ''}`).join(' · ')
-        : 'Sommeil, Body Battery, stress… de la nuit et d’hier',
-    }),
-    fromGarmin ? h('p', { class: 'small muted', style: 'margin:0' }, 'Arrivés tout seuls depuis Garmin. Tu peux corriger : ta valeur sera gardée.') : null,
-    disclosure(shown.length ? 'Modifier mes chiffres' : 'Saisir mes chiffres', () => [
-      grid,
-      err,
-      h('button', { class: 'btn primary block', type: 'button', onclick: save }, 'Enregistrer'),
-    ], 'bal-garmin', 'Fermer'),
-  );
-}
-
-// ---------- 5. insights ----------
+// ---------- 4. recovery: Garmin numbers + what they say ----------
 
 const fmtSlope = (kgWeek: number) => {
   const r = Math.round(kgWeek * 10) / 10;
   return `${r > 0 ? '+' : r < 0 ? '−' : '±'}${Math.abs(r).toLocaleString('fr-FR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} kg/sem.`;
 };
 
-function insightsCard(date: string): HTMLElement {
+function recoveryCard(date: string): HTMLElement {
   const days = store.state.days;
+  const wb = store.getDay(date).wellbeing ?? {};
+  const lvl = recoveryLevel(date, days);
+  const shown = GFIELDS.filter((f) => wb[f.key] !== undefined);
+
   const week = recentWellbeing(days, date, 7);
   const sleeps = week.map((x) => x.wb?.sleepH).filter((v): v is number => typeof v === 'number');
   const stresses = week.map((x) => x.wb?.stress).filter((v): v is number => typeof v === 'number');
-  const flag = recoveryFlag(date, days);
   const sw = sleepWeightInsight(days, date);
-  const enough = sleeps.length >= 3 || stresses.length >= 3 || sw !== null;
-
   const rows: HTMLElement[] = [];
-  if (flag.low) rows.push(h('div', { class: 'bal-flag' }, `${flag.reason} : aujourd’hui, séance douce.`));
-  if (enough) {
-    if (sleeps.length) {
-      const short = sleeps.filter((v) => v < 6).length;
-      rows.push(insight(ICON.moon, short ? `${short} nuit${short > 1 ? 's' : ''} sous 6 h sur 7 jours.` : 'Aucune nuit sous 6 h sur 7 jours.',
-        short >= 2 ? 'Viser un coucher un peu plus tôt aide souvent plus que tout le reste.' : undefined));
-    }
-    if (stresses.length) {
-      const high = stresses.filter((v) => v >= 50).length;
-      rows.push(insight(ICON.spark, high ? `${high} jour${high > 1 ? 's' : ''} de stress haut (50 ou plus) sur 7.` : 'Pas de journée de stress haut sur 7 jours.',
-        high >= 2 ? 'Ces jours-là, marche et respiration valent mieux qu’une séance intense.' : undefined));
-    }
-    if (sw) {
-      rows.push(insight(ICON.scale, `Tendance du poids : ${fmtSlope(sw.goodSlope)} les semaines à 7 h de sommeil ou plus, ${fmtSlope(sw.shortSlope)} sinon.`,
-        `Estimation sur ${sw.goodWeeks + sw.shortWeeks} semaines : un lien, pas une preuve.`));
-    }
+  if (sleeps.length >= 3) {
+    const short = sleeps.filter((v) => v < 6).length;
+    rows.push(insight(ICON.moon, short ? `${short} nuit${short > 1 ? 's' : ''} sous 6 h sur 7 jours.` : 'Aucune nuit sous 6 h sur 7 jours.',
+      short >= 2 ? 'Viser un coucher un peu plus tôt aide souvent plus que tout le reste.' : undefined));
+  }
+  if (stresses.length >= 3) {
+    const high = stresses.filter((v) => v >= 50).length;
+    rows.push(insight(ICON.spark, high ? `${high} jour${high > 1 ? 's' : ''} de stress haut (50 ou plus) sur 7.` : 'Pas de journée de stress haut sur 7 jours.',
+      high >= 2 ? 'Ces jours-là, marche et respiration valent mieux qu’une séance intense.' : undefined));
+  }
+  // Only when the gap says something (more than 0,2 kg/week).
+  if (sw && Math.abs(sw.goodSlope - sw.shortSlope) > 0.2) {
+    rows.push(insight(ICON.scale, `Tendance du poids : ${fmtSlope(sw.goodSlope)} les semaines à 7 h de sommeil ou plus, ${fmtSlope(sw.shortSlope)} sinon.`,
+      `Estimation sur ${sw.goodWeeks + sw.shortWeeks} semaines : un lien, pas une preuve.`));
   }
 
   return h('section', { class: 'card ux solo' },
-    h('h3', null, 'Ce que disent tes chiffres'),
-    rows.length ? h('div', { class: 'stack', style: 'gap:8px' }, rows) : null,
-    enough ? null : h('p', { class: 'small muted' }, 'Note ton sommeil et ton stress quelques jours : ici apparaîtront tes nuits courtes, tes jours de stress et leur lien avec ton poids.'),
+    infoRow({
+      icon: ICON.battery,
+      title: lvl ? RECOVERY_LABEL[lvl] : 'Tes chiffres Garmin',
+      detail: lvl
+        ? [recoveryLine(date, days), ...shown.filter((f) => f.key === 'restingHr' || f.key === 'steps').map((f) => `${f.label} ${fmtGVal(f, wb[f.key] as number)}${f.unit ? ' ' + f.unit : ''}`)].filter(Boolean).join(' · ')
+        : 'Sommeil, Body Battery, stress… de la nuit et d’hier',
+    }),
+    rows.length ? h('div', { class: 'stack', style: 'gap:8px' }, rows) : h('p', { class: 'small muted' }, 'Note ton sommeil et ton stress quelques jours : ici apparaîtront tes nuits courtes, tes jours de stress et leur lien avec ton poids.'),
+    disclosure(shown.length ? 'Modifier mes chiffres' : 'Saisir mes chiffres', () => garminForm(date, () => toast('Chiffres enregistrés')), 'bal-garmin', 'Replier'),
   );
 }
 
@@ -436,13 +370,13 @@ function cortisolCard(): HTMLElement {
       h('li', null, 'Ne pas sauter de repas'),
       h('li', null, 'Moins de café l’après-midi'),
       h('li', null, 'Peu ou pas d’alcool'),
-    ), 'bal-cort-down', 'Masquer'),
+    ), 'bal-cort-down', 'Replier'),
     disclosure('Ce qui le fait grimper', () => h('ul', { class: 'bal-list small' },
       h('li', null, 'Les nuits courtes'),
       h('li', null, 'Les gros déficits caloriques'),
       h('li', null, 'Les séances intenses enchaînées'),
       h('li', null, 'Les écrans tard le soir'),
-    ), 'bal-cort-up', 'Masquer'),
+    ), 'bal-cort-up', 'Replier'),
     h('p', { class: 'small muted' }, 'Pas de complément « anti-cortisol » (ashwagandha…) en essai bébé ou grossesse : demande à ton médecin.'),
   );
 }

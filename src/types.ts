@@ -155,6 +155,8 @@ export interface DayLog {
   slips?: Slip[];
   /** Morning / evening check-ins with the coach. */
   checkin?: Checkin;
+  /** Coach regulation tips ticked that have no pillar (tip id → done). */
+  tips?: Record<string, boolean>;
 }
 
 export type SlipKind = 'sucre' | 'grignotage' | 'gros-repas' | 'alcool' | 'fastfood' | 'autre';
