@@ -22,6 +22,7 @@ import {
 import { openBreathing } from './breathing';
 import { slotForNow } from './food-search';
 import { cycleRing } from './today-ring';
+import { journeySection } from './journey-balance';
 import { guideSafe, openIdeaSheet } from './today-guide';
 import {
   garminForm, lateBlock, toggleHabit, popCls, recoveryLevel, recoveryLine, RECOVERY_LABEL, GFIELDS, fmtGVal,
@@ -44,6 +45,7 @@ export const renderBalance: Screen = (root, ctx) => {
   const info = cs.tracking && !cs.pregnant ? cycleOn(date, p, store.state.days) : null;
 
   root.append(header(date, ctx, info));
+  root.append(...journeySection(date));
   if (cs.tracking) {
     root.append(sectionTitle(cs.pregnant ? 'Ta grossesse' : 'Ton cycle'), cs.pregnant ? pregnancyCard(date) : cycleCard(date, p, info, ctx));
   }

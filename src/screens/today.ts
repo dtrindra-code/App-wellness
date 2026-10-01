@@ -26,6 +26,11 @@ import { coachDayCard, weeklyBilanCard } from './coach';
 import { backupReminderDue } from '../lib/sync';
 import { budgetOn, cycleHero, guideSafe, plateCard, recoveryRow, regulateCard } from './today-guide';
 import type { Moment } from './today-guide';
+import {
+  journeyInviteCard, journeyMorningCard, journeyMorningSummary, journeyPromptCard, journeyRecapCard, journeyRulesCard,
+} from './journey';
+import { sundayResetCard } from './sunday-reset';
+import { journeyDay, resetDue, dayScore } from '../lib/journey';
 
 // ---------- transient UI state ----------
 /** Planned session ids whose "version mini" is unfolded. */
@@ -62,6 +67,11 @@ export const renderToday: Screen = (root, ctx) => {
       bilanShown: !!bilan,
       rerender: () => rerender(ctx),
     }));
+  }
+
+  if (p.onboarded) {
+    const invite = journeyInviteCard(date);
+    if (invite) root.append(invite);
   }
 
   for (const m of MOMENTS) root.append(...momentBlock(m, moment, date, ctx, bilan));
@@ -129,17 +139,27 @@ function momentBlock(m: Moment, current: Moment, date: string, ctx: ScreenCtx, b
 
 function momentContent(m: Moment, current: Moment, date: string, ctx: ScreenCtx, bilan: HTMLElement | null): HTMLElement[] {
   const out: (HTMLElement | null)[] = [];
+  const re = () => rerender(ctx);
+  const hour = nowHour();
   if (m === 'matin') {
+    // Monday morning: last week's reset if not done yet.
+    if (weekday(date) === 0 && resetDue(date, hour)) out.push(sundayResetCard(date, true));
+    out.push(journeyMorningCard(date, re));
     out.push(regulateCard(date, 'matin', guideSafe(date, { moment: 'matin' })), weighCard(date, ctx));
   } else if (m === 'journee') {
     // In the evening the plate lives in CE SOIR (the dinner): no second copy here.
     if (current !== 'soir') out.push(plateCard(date, current, ctx, guideSafe(date, { moment: current, ideas: current === 'matin' ? 2 : 3 })));
     out.push(sessionCard(date, ctx, current === 'soir'));
+    // The engagements live here until the evening, then move to CE SOIR.
+    if (current !== 'soir') out.push(journeyRulesCard(date));
     if (current === 'journee') out.push(regulateCard(date, 'journee', guideSafe(date, { moment: 'journee' })));
   } else {
     if (current === 'soir') {
-      out.push(bilan, plateCard(date, 'soir', ctx, guideSafe(date, { moment: 'soir', ideas: 2 })));
+      if (weekday(date) === 6 && resetDue(date, hour)) out.push(sundayResetCard(date));
+      out.push(bilan, journeyRulesCard(date));
     }
+    out.push(journeyPromptCard(date, re), journeyRecapCard(date));
+    if (current === 'soir') out.push(plateCard(date, 'soir', ctx, guideSafe(date, { moment: 'soir', ideas: 2 })));
     out.push(regulateCard(date, 'soir', guideSafe(date, { moment: 'soir' })), tomorrowCard(date, ctx));
   }
   return out.filter((x): x is HTMLElement => !!x);
@@ -151,7 +171,9 @@ function summary(m: Moment, current: Moment, date: string): string {
   if (m === 'matin') {
     const parts: string[] = [];
     const mood = day.checkin?.morningMood;
-    if (mood !== undefined) parts.push(`humeur ${MOOD_LABELS[mood - 1] ?? ''}`.trim());
+    const jr = journeyMorningSummary(date);
+    if (jr) parts.push(jr);
+    else if (mood !== undefined) parts.push(`humeur ${MOOD_LABELS[mood - 1] ?? ''}`.trim());
     if (typeof day.weight === 'number') parts.push(`pesée ${fmtKg(day.weight)}`);
     const pillars = habitScore(day);
     if (pillars) parts.push(`${pillars} pilier${pillars > 1 ? 's' : ''} ✓`);
@@ -163,12 +185,14 @@ function summary(m: Moment, current: Moment, date: string): string {
       ? `Protéines ${fmtInt(eaten.protein)}/${fmtInt(t.protein)} g`
       : `Assiette ${fmtInt(eaten.kcal)}/${fmtInt(t.budget)} kcal`;
     const parts = [plate, sessionSummary(date)];
+    if (journeyDay(date) !== null) { const sc = dayScore(date); parts.push(`engagements ${sc.done}/${sc.total}${sc.success ? ' ✓' : ''}`); }
     return parts.join(' · ');
   }
   // Evening preview.
   const tip = guideSafe(date, { moment: 'soir' })?.regulate?.[0];
   const first = tip ? tip.title.charAt(0).toLowerCase() + tip.title.slice(1) : 'écrans off 30 min avant le coucher';
-  return current === 'soir' ? `Ce soir · ${first}` : `Ce soir : ${first} · ton bilan à partir de 18 h`;
+  const page = journeyDay(date) !== null && !day.journey?.answer ? 'ta page du jour · ' : '';
+  return current === 'soir' ? `Ce soir · ${page}${first}` : `Ce soir : ${page}${first} · ton bilan à partir de 18 h`;
 }
 
 function sessionSummary(date: string): string {

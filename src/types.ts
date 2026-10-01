@@ -1,5 +1,7 @@
 // Shared data model. Dates are local ISO days: "YYYY-MM-DD".
 
+import type { NeedKey } from './data/journey';
+
 export type Sex = 'f' | 'm';
 
 export interface Profile {
@@ -38,6 +40,32 @@ export interface Profile {
   runBaseMin?: number;
   /** Planned sessions per week on top of basketball (default 3; the half prep grows it to 5). */
   sessionsPerWeek?: number;
+  /** "Revenir à moi": the 60-day journey (absent until she starts it). */
+  journey?: JourneySettings;
+}
+
+/** "Revenir à moi" settings (lib/journey.ts). */
+export interface JourneySettings {
+  /** Day 1 of the 60 days. */
+  startDate: string;
+  /** Current engagements (keys of data/journey RULES). */
+  rules: string[];
+  /** Jokers used, by Monday of the week (kept in sync with DayLog.journey.joker). */
+  jokersUsed: Record<string, number>;
+  /** Earlier rule sets: `rules` applied from `from` (the newest entry ≤ a date wins; else `rules`). */
+  history?: { from: string; rules: string[] }[];
+}
+
+/** One day of "Revenir à moi". */
+export interface JourneyDay {
+  /** Energy 1 … 5 (falls back to the morning mood when absent). */
+  energy?: number;
+  needs?: NeedKey[];
+  /** Manual engagements ticked (auto ones are computed from the day). */
+  rulesDone?: Record<string, boolean>;
+  /** A joker was used: the day counts as réussie. */
+  joker?: boolean;
+  answer?: { chips: string[]; text?: string; skipped?: boolean };
 }
 
 export interface CycleSettings {
@@ -157,6 +185,10 @@ export interface DayLog {
   checkin?: Checkin;
   /** Coach regulation tips ticked that have no pillar (tip id → done). */
   tips?: Record<string, boolean>;
+  /** "Revenir à moi": check-in, engagements, journal answer. */
+  journey?: JourneyDay;
+  /** Sunday reset of the week ending this Sunday (step key → answer). */
+  journeyReset?: Record<string, { chips?: string[]; text?: string }>;
 }
 
 export type SlipKind = 'sucre' | 'grignotage' | 'gros-repas' | 'alcool' | 'fastfood' | 'autre';

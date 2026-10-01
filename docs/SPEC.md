@@ -108,3 +108,10 @@ Garmin's official API is for businesses only, so a **GitHub Actions cron** (`.gi
   - pillars sommeil (≥ 7 h) and marche (≥ 8 000 pas) ticked when Garmin brings that value, never unticked. Nothing is ever deleted.
 - **Plus → Garmin Connect**: status (« Dernière synchro : 09:12 · 3 jours · 2 activités », checked-on-phone time, what the last import added), « Synchroniser maintenant » (GitHub refreshes every ~3 h; link to run the workflow manually), the 4-step setup guide with copy buttons (backup active → key → 4 secrets with the secrets URL → first run), and an honest note (unofficial access, may break, use a Garmin password not used elsewhere, no 2FA). The manual Garmin form in Équilibre stays and shows Garmin's values.
 - **Tests**: `node scripts/garmin/crypto-test.mjs` (Python ↔ WebCrypto round trip, fictional data).
+
+## V10 — Revenir à moi
+- 60-day guided journey (`src/data/journey.ts` content, `src/lib/journey.ts` logic, `src/screens/journey*.ts`, `src/screens/sunday-reset.ts`): 4 chapters of 15 days (Me poser · Mon énergie · Mes besoins · Moi, au-delà de maman).
+- Daily, 5 min max: one morning check-in (energy + needs, merged with the coach mood), soft engagements (5 default rules, some auto-done from workouts/steps, water and pillars, synced both ways; a day is réussie at ≥ 80 %, 2 jokers per week, nothing ever resets), one journal prompt in the evening (chips + optional text, "Passer" allowed), phase-specific prompt variants.
+- Chapter intro on day 1 and recap on day 15. Sunday reset in 5 steps (review, felt, prepare next week with cycle and sessions, mental load, a planned pleasure), saved on the Sunday's DayLog.
+- Data lives in `Profile.journey`, `DayLog.journey`, `DayLog.journeyReset`: included in export and the encrypted backup. The coach only uses counts and need names, never quotes entries.
+- Checks: `node scripts/check-journey.mjs`.
