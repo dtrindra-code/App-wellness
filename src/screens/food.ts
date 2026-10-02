@@ -549,6 +549,7 @@ function summaryCard(date: string): HTMLElement {
     h('p', { class: 'small muted num' },
       `Mangé ${fmtInt(eaten.kcal)} kcal sur ${fmtInt(t.budget)}`,
       t.sportBonus > 0 ? ` · dont +${fmtInt(t.sportBonus)} sport` : '',
+      t.stepBonus > 0 ? ` · +${fmtInt(t.stepBonus)} pas` : '',
       cycleExtra > 0 ? ` · +${fmtInt(cycleExtra)} cycle` : ''),
     basketHint(date),
     h('div', { class: 'row', style: 'gap:8px' },

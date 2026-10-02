@@ -14,7 +14,7 @@ import {
   sectionTitle, infoRow, iconCircle, checkRow, rowList, haptic, ICON, SPORT_LABEL,
 } from '../lib/ui';
 import { today, addDays, daysBetween, fmtLong, weekday } from '../lib/dates';
-import { bmr, movingAverage, plannedWeight, workoutKcal } from '../lib/nutrition';
+import { bmr, movingAverage, plannedWeight, stepsBurn, STEP_BASE, workoutKcal } from '../lib/nutrition';
 import { adaptedSessionsOn } from '../data/plan';
 import { cycleOn, cycleSettings, phaseLabel } from '../lib/cycle';
 import { recoveryFlag, habitScore, HABITS } from '../lib/habits';
@@ -394,6 +394,32 @@ function workoutLine(w: Workout, weight: number): string {
   ].filter(Boolean).join(' · ');
 }
 
+/** Steps of the day (Garmin or typed on Équilibre): progress to the 8 000 pillar and the kcal they add. */
+function stepsRow(date: string, ctx: ScreenCtx): HTMLElement {
+  const day = store.getDay(date);
+  const { steps, inWorkouts } = stepsBurn(day, store.weightOn(date));
+  const { t } = budgetOn(date);
+  const goal = 8000;
+  const garmin = day.wellbeing?.source === 'garmin' && !(day.wellbeing.manual ?? []).includes('steps');
+  const detail = !steps
+    ? 'Pas encore de pas aujourd’hui · Garmin les envoie toutes les heures'
+    : [
+        steps >= goal ? 'pilier marche ✓' : `encore ${fmtInt(goal - steps)} pour ${fmtInt(goal)}`,
+        t.stepBonus > 0 ? `+${fmtInt(t.stepBonus)} kcal à ton budget`
+          : inWorkouts > 0 ? 'ceux de tes séances sont déjà comptés dans le sport'
+          : `les kcal comptent au-delà de ${fmtInt(STEP_BASE)} pas`,
+        garmin ? 'Garmin' : null,
+      ].filter(Boolean).join(' · ');
+  const row = h('button', { class: 'info-row tap dc-steps', type: 'button', onclick: () => ctx.go('balance') },
+    iconCircle(ICON.leaf),
+    h('span', { class: 'info-main' },
+      h('span', { class: 'info-title num' }, steps ? `${fmtInt(steps)} pas` : 'Tes pas'),
+      h('span', { class: 'dc-steps-bar', 'aria-hidden': 'true' }, h('span', { style: `width:${Math.min(100, Math.round((steps / goal) * 100))}%` })),
+      h('span', { class: 'info-detail' }, detail)),
+    h('span', { class: 'info-chev', 'aria-hidden': 'true' }, '›'));
+  return row;
+}
+
 /** TON SPORT: the planned sessions, basket, and everything else she did (Garmin or by hand). */
 function sportBlock(date: string, ctx: ScreenCtx): HTMLElement[] {
   const day = store.getDay(date);
@@ -411,9 +437,12 @@ function sportBlock(date: string, ctx: ScreenCtx): HTMLElement[] {
       onClick: () => ctx.go('training'),
     }));
   }
+  rows.unshift(stepsRow(date, ctx));
   const { t } = budgetOn(date);
-  const foot = t.sportBonus > 0
-    ? h('p', { class: 'dc-sport-foot small' }, `Ton sport ajoute `, h('strong', { class: 'num' }, `+${fmtInt(t.sportBonus)} kcal`), ` à ton budget repas.`)
+  const bonus = t.sportBonus + t.stepBonus;
+  const who = t.sportBonus > 0 && t.stepBonus > 0 ? 'Ton sport et tes pas ajoutent' : t.stepBonus > 0 ? 'Tes pas ajoutent' : 'Ton sport ajoute';
+  const foot = bonus > 0
+    ? h('p', { class: 'dc-sport-foot small' }, `${who} `, h('strong', { class: 'num' }, `+${fmtInt(bonus)} kcal`), ` à ton budget repas.`)
     : null;
   return [
     sectionTitle('Ton sport'),
