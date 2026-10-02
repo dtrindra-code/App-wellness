@@ -145,6 +145,8 @@ function momentBlock(m: Moment, current: Moment, date: string, ctx: ScreenCtx, p
 
 function momentContent(m: Moment, current: Moment, date: string, ctx: ScreenCtx): HTMLElement[] {
   const rows: (HTMLElement | null)[] = [];
+  // The journal engagements get their own block: one block, one job.
+  let rules: HTMLElement | null = null;
   if (m === 'matin') {
     rows.push(weighRow(date, ctx));
     rows.push(...regulateRows(date, 'matin', guideSafe(date, { moment: 'matin' }), 2));
@@ -154,19 +156,22 @@ function momentContent(m: Moment, current: Moment, date: string, ctx: ScreenCtx)
     if (current !== 'soir') rows.push(plateRow(date, 'journee', ctx));
     rows.push(...sessionRows(date, ctx));
     // The engagements live here until the evening, then move to CE SOIR.
-    if (current !== 'soir') rows.push(journeyRulesRows(date));
+    if (current !== 'soir') rules = journeyRulesRows(date);
     if (current === 'journee') {
       rows.push(...regulateRows(date, 'journee', guideSafe(date, { moment: 'journee' }), 2));
       rows.push(breathingRow(date));
     }
   } else {
-    rows.push(journeyRulesRows(date));
+    rules = journeyRulesRows(date);
     rows.push(plateRow(date, 'soir', ctx));
     rows.push(...regulateRows(date, 'soir', guideSafe(date, { moment: 'soir' }), 3));
     rows.push(breathingRow(date));
     rows.push(tomorrowRow(date, ctx));
   }
-  return [rowList(...rows)];
+  const block = h('section', { class: 'card ux dc-moment' }, rowList(...rows));
+  if (!rules) return [block];
+  const rulesBlock = h('section', { class: 'card ux dc-moment dc-rules' }, rules);
+  return m === 'soir' ? [rulesBlock, block] : [block, rulesBlock];
 }
 
 /** One-line summary of a folded moment: what was done, the main result. */
@@ -408,7 +413,7 @@ function footer(date: string, ctx: ScreenCtx): HTMLElement[] {
   const hb = store.getDay(date).habits ?? {};
   const done = HABITS.filter((x) => hb[x.key]).length;
   const out: HTMLElement[] = [
-    h('button', { class: 'dc-pillars-link', type: 'button', onclick: () => ctx.go('balance') },
+    h('button', { class: 'card ux dc-pillars-link', type: 'button', onclick: () => ctx.go('balance') },
       h('span', null, 'Tous mes piliers'),
       h('span', { class: 'num' }, `${done}/${HABITS.length} ›`)),
   ];
