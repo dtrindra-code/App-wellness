@@ -387,7 +387,8 @@ function workoutLine(w: Workout, weight: number): string {
   return [
     w.time ? `à ${w.time.replace(':', ' h ')}` : null,
     `${fmtInt(w.minutes)} min`,
-    w.distanceKm ? `${String(w.distanceKm).replace('.', ',')} km` : null,
+    // GPS distance means nothing on a court.
+    w.distanceKm && w.sport !== 'basket' ? `${String(w.distanceKm).replace('.', ',')} km` : null,
     `${fmtInt(kcal)} kcal${w.calories ? '' : ' (estimé)'}`,
     w.avgHr ? `FC ${w.avgHr}` : null,
     w.source === 'garmin' || w.garminId ? 'Garmin' : null,
