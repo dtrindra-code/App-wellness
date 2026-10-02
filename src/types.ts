@@ -1,6 +1,6 @@
 // Shared data model. Dates are local ISO days: "YYYY-MM-DD".
 
-import type { NeedKey } from './data/journey';
+import type { EmotionKey, NeedKey } from './data/journey';
 
 export type Sex = 'f' | 'm';
 
@@ -54,6 +54,28 @@ export interface JourneySettings {
   jokersUsed: Record<string, number>;
   /** Earlier rule sets: `rules` applied from `from` (the newest entry ≤ a date wins; else `rules`). */
   history?: { from: string; rules: string[] }[];
+  /** Checkpoints of the journal: day 0 (baseline), 30 and 60 (absent until filled). */
+  checkpoints?: Partial<Record<CheckpointKey, JourneyCheckpoint>>;
+}
+
+export type CheckpointKey = '0' | '30' | '60';
+
+/** One checkpoint ("Mon point de départ", "Premier regard en arrière", "Ajustements et découvertes"). */
+export interface JourneyCheckpoint {
+  /** 0–10 scales. */
+  energy?: number;
+  stress?: number;
+  satisfaction?: number;
+  /** Life wheel: LIFE_DOMAINS key → 0–10. */
+  wheel?: Record<string, number>;
+  /** Day 0 intention (free text). */
+  intention?: string;
+  /** Day 0: the 3 values picked (VALUES labels). */
+  values?: string[];
+  /** Other fields by key (text answers, choice option, `${key}.note` follow-ups, `letter`). */
+  answers?: Record<string, string>;
+  /** ISO timestamp when she finished it. */
+  doneAt?: string;
 }
 
 /** One day of "Revenir à moi". */
@@ -65,7 +87,10 @@ export interface JourneyDay {
   rulesDone?: Record<string, boolean>;
   /** A joker was used: the day counts as réussie. */
   joker?: boolean;
-  answer?: { chips: string[]; text?: string; skipped?: boolean };
+  /** Journal page. Old entries: chips + one `text`; since v11 one text per question in `answers` (`text` mirrors answers[0]). */
+  answer?: { chips: string[]; text?: string; skipped?: boolean; answers?: string[] };
+  /** Morning emotion (emotion wheel): family + optional nuance. */
+  emotion?: { family: EmotionKey; nuance?: string };
 }
 
 export interface CycleSettings {

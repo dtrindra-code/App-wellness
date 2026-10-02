@@ -8,6 +8,7 @@ import { h, openSheet, field, parseNum, iconCircle, ICON } from '../lib/ui';
 import { today } from '../lib/dates';
 import { slipResponse, SLIP_KIND_LABEL, SLIP_TRIGGER_LABEL } from '../lib/coach';
 import { openBreathing } from './breathing';
+import { openRereadSheet } from './journal-science';
 
 const KINDS: SlipKind[] = ['sucre', 'grignotage', 'gros-repas', 'alcool', 'fastfood', 'autre'];
 const TRIGGERS: SlipTrigger[] = ['stress', 'fatigue', 'faim', 'emotion', 'social', 'regles', 'ennui'];
@@ -85,6 +86,7 @@ export function openSlipSheet(date: string = today()): void {
       wantsBreath
         ? h('button', { class: 'btn block', type: 'button', onclick: () => { sheet.close(); openBreathing(date); } }, 'Respirer 5 min avec moi')
         : null,
+      h('button', { class: 'dc-link', style: 'align-self:center', type: 'button', onclick: () => { sheet.close(); setTimeout(openRereadSheet, 240); } }, 'À relire quand ça monte ›'),
       h('button', { class: 'btn primary block', type: 'button', onclick: () => sheet.close() }, 'Merci, je continue'),
     ];
     wrap.replaceChildren(...parts.filter((x): x is HTMLElement => !!x));

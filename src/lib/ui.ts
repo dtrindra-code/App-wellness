@@ -74,17 +74,50 @@ export const parseNum = (v: string): number | undefined => {
 
 export interface Sheet { el: HTMLElement; close: () => void }
 
-/** Open a bottom sheet. Content is appended into the sheet body. */
-export function openSheet(title: string, content: Node, opts: { onClose?: () => void } = {}): Sheet {
+export interface SheetOpts {
+  onClose?: () => void;
+  /** 'full': takes the whole screen height (journal pages). */
+  variant?: 'full';
+  /** Extra class(es) on `.sheet`. */
+  cls?: string;
+}
+
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type=hidden]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/**
+ * Open a bottom sheet. Content is appended into the sheet body.
+ * Modal for assistive tech (aria-modal), keeps focus inside, Escape closes,
+ * focus goes back to the control that opened it.
+ */
+export function openSheet(title: string, content: Node, opts: SheetOpts = {}): Sheet {
+  const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   const backdrop = h('div', { class: 'sheet-backdrop' });
   const body = h('div', { class: 'sheet-body' }, content);
-  const closeBtn = h('button', { class: 'btn-icon', 'aria-label': 'Fermer', onclick: () => close() }, '×');
-  const sheet = h('div', { class: 'sheet', role: 'dialog', 'aria-label': title },
+  const closeBtn = h('button', { class: 'btn-icon sheet-close', type: 'button', 'aria-label': 'Fermer', onclick: () => close() }, '×');
+  const cls = ['sheet', opts.variant === 'full' ? 'sheet-full' : '', opts.cls ?? ''].filter(Boolean).join(' ');
+  const sheet = h('div', { class: cls, role: 'dialog', 'aria-modal': 'true', 'aria-label': title, tabIndex: -1 },
     h('div', { class: 'sheet-head' }, h('h2', null, title), closeBtn),
     body,
   );
   const wrap = h('div', { class: 'sheet-wrap' }, backdrop, sheet);
   backdrop.addEventListener('click', () => close());
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+    if (e.key !== 'Tab') return;
+    // Only the top-most sheet traps focus.
+    const sheets = document.querySelectorAll('.sheet-wrap');
+    if (sheets[sheets.length - 1] !== wrap) return;
+    const items = Array.from(sheet.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((el) => el.offsetParent !== null);
+    if (!items.length) { e.preventDefault(); sheet.focus(); return; }
+    const first = items[0], last = items[items.length - 1];
+    if (e.shiftKey && (document.activeElement === first || document.activeElement === sheet)) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  };
+  const onKeyTop = (e: KeyboardEvent) => {
+    const sheets = document.querySelectorAll('.sheet-wrap');
+    if (sheets[sheets.length - 1] === wrap) onKey(e);
+  };
+  document.addEventListener('keydown', onKeyTop);
   document.body.appendChild(wrap);
   document.body.classList.add('sheet-open');
   requestAnimationFrame(() => wrap.classList.add('open'));
@@ -92,29 +125,71 @@ export function openSheet(title: string, content: Node, opts: { onClose?: () => 
   function close() {
     if (closed) return;
     closed = true;
+    document.removeEventListener('keydown', onKeyTop);
     wrap.classList.remove('open');
-    document.body.classList.remove('sheet-open');
-    setTimeout(() => wrap.remove(), 220);
+    setTimeout(() => {
+      wrap.remove();
+      if (!document.querySelector('.sheet-wrap')) document.body.classList.remove('sheet-open');
+    }, 220);
+    if (!document.querySelectorAll('.sheet-wrap.open').length) document.body.classList.remove('sheet-open');
     opts.onClose?.();
+    if (opener && opener.isConnected) {
+      try { opener.focus({ preventScroll: true }); } catch { /* ignore */ }
+    }
   }
-  const first = body.querySelector<HTMLElement>('input:not([type=date]):not([type=checkbox]), textarea');
-  if (first) setTimeout(() => first.focus(), 250);
+  const first = body.querySelector<HTMLElement>('input:not([type=date]):not([type=checkbox]):not([type=range]), textarea');
+  setTimeout(() => {
+    if (closed) return;
+    if (first && opts.variant !== 'full') first.focus();
+    else if (!sheet.contains(document.activeElement)) sheet.focus({ preventScroll: true });
+  }, 250);
   return { el: body, close };
 }
 
 // ---------- toast ----------
 
+export interface ToastOpts {
+  /** One action button ("Annuler"). The toast then stays 3.2 s and takes taps. */
+  action?: { label: string; run: () => void };
+  ms?: number;
+}
+
 let toastTimer: number | undefined;
-export function toast(msg: string) {
+export function toast(msg: string, opts: ToastOpts = {}) {
   let el = document.getElementById('toast');
   if (!el) {
-    el = h('div', { id: 'toast', class: 'toast', role: 'status' });
+    el = h('div', { id: 'toast', class: 'toast', role: 'status', 'aria-live': 'polite' });
     document.body.appendChild(el);
   }
-  el.textContent = msg;
-  el.classList.add('show');
+  const box = el;
+  const hide = () => box.classList.remove('show', 'has-action');
+  box.replaceChildren(h('span', { class: 'toast-msg' }, msg));
+  if (opts.action) {
+    const a = opts.action;
+    box.append(h('button', {
+      class: 'toast-action', type: 'button',
+      onclick: () => { clearTimeout(toastTimer); hide(); a.run(); },
+    }, a.label));
+  }
+  box.classList.toggle('has-action', !!opts.action);
+  box.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => el!.classList.remove('show'), 2200);
+  toastTimer = window.setTimeout(hide, opts.ms ?? (opts.action ? 3200 : 2200));
+}
+
+// ---------- tactile feedback ----------
+
+/**
+ * A tiny vibration where supported (ignored on iOS: the visual feedback does the job)
+ * and a short pink-wash flash on `el` (`.just-done`).
+ */
+export function haptic(el?: Element | null) {
+  try { navigator.vibrate?.(8); } catch { /* ignore */ }
+  if (!el) return;
+  el.classList.remove('just-done');
+  void (el as HTMLElement).offsetWidth;
+  el.classList.add('just-done');
+  setTimeout(() => el.classList.remove('just-done'), 450);
 }
 
 // ---------- form bits ----------
@@ -195,13 +270,12 @@ export function gearIcon(): SVGElement {
 
 /**
  * Bead letters: one round bead per character, like a friendship bracelet.
- * Purely decorative (aria-hidden); pair it with real text for screen readers (see screenTitle).
- * `pink` lists the bead indexes drawn pink (default: the first and one near the middle).
+ * Purely decorative (aria-hidden). Only on the main page title, one pink bead at most.
+ * `pink` lists the bead indexes drawn pink (default: the first only).
  */
-export function beads(text: string, pink?: number[]): HTMLElement {
+export function beads(text: string, pink: number[] = [0]): HTMLElement {
   const chars = Array.from(text.toLocaleUpperCase('fr-FR'));
-  const letters = chars.filter((c) => c.trim() !== '').length;
-  const pinkSet = new Set(pink ?? (letters > 3 ? [0, Math.floor(letters / 2) + 1] : [0]));
+  const pinkSet = new Set(pink.slice(0, 1));
   const wrap = h('span', { class: 'beads', 'aria-hidden': 'true' });
   let i = 0;
   for (const c of chars) {
@@ -212,12 +286,16 @@ export function beads(text: string, pink?: number[]): HTMLElement {
   return wrap;
 }
 
-/** Screen title: the h1 keeps its real text (sr-only) and shows bead letters. */
-export function screenTitle(text: string, pink?: number[]): HTMLElement {
-  return h('h1', { class: 'bead-title' }, h('span', { class: 'sr-only' }, text), beads(text, pink));
+/**
+ * Screen title: a plain h1 at 28 px. `beads: true` adds the bead signature row above
+ * (Today only), the h1 keeping the real text.
+ */
+export function screenTitle(text: string, opts: { beads?: boolean } = {}): HTMLElement {
+  if (!opts.beads) return h('h1', { class: 'screen-title' }, text);
+  return h('h1', { class: 'bead-title' }, h('span', { class: 'sr-only' }, text), beads(text));
 }
 
-/** Small gold star sticker (Today countdown). */
+/** Small gold star sticker: one per screen at most, journal / celebration only. */
 export function starSticker(cls = ''): SVGElement {
   return s('svg', { class: `sticker stk-star ${cls}`.trim(), viewBox: '0 0 48 48', 'aria-hidden': 'true' },
     s('path', { class: 'stk-star-fill', d: 'M24 4.2c1.2 0 2.1.8 2.7 2l4.5 9.3 10.2 1.5c2.7.4 3.8 3.6 1.8 5.5l-7.4 7.2 1.8 10.1c.5 2.7-2.3 4.7-4.8 3.4L24 38.5l-8.9 4.8c-2.4 1.3-5.3-.7-4.8-3.4l1.8-10.1-7.4-7.2c-2-1.9-.9-5.1 1.8-5.5l10.2-1.5 4.5-9.3c.6-1.2 1.6-2 2.8-2z' }),
@@ -225,36 +303,11 @@ export function starSticker(cls = ''): SVGElement {
   );
 }
 
-/** Black binder clip holding a card (quote card). */
-export function clipSticker(cls = ''): SVGElement {
-  return s('svg', { class: `sticker stk-clip ${cls}`.trim(), viewBox: '0 0 60 54', 'aria-hidden': 'true' },
-    s('path', { class: 'stk-clip-wire', d: 'M21 30 L17 6 Q17 2 21 2 L39 2 Q43 2 43 6 L39 30', fill: 'none', 'stroke-width': 2.6, 'stroke-linejoin': 'round' }),
-    s('path', { class: 'stk-clip-body', d: 'M8 28 H52 L47 50 Q46 52 44 52 H16 Q14 52 13 50 Z' }),
-    s('path', { class: 'stk-clip-shine', d: 'M12 32 H48', 'stroke-width': 1.2 }),
-  );
-}
-
-let heartSeq = 0;
-/** Polka-dot heart sticker (Équilibre accent). */
-export function heartSticker(cls = ''): SVGElement {
-  const id = `stk-dots-${++heartSeq}`;
-  return s('svg', { class: `sticker stk-heart ${cls}`.trim(), viewBox: '0 0 40 36', 'aria-hidden': 'true' },
-    s('defs', null,
-      s('pattern', { id, width: 6, height: 6, patternUnits: 'userSpaceOnUse' },
-        s('rect', { class: 'stk-heart-bg', width: 6, height: 6 }),
-        s('circle', { class: 'stk-heart-dot', cx: 1.5, cy: 1.5, r: 1.2 }),
-        s('circle', { class: 'stk-heart-dot', cx: 4.5, cy: 4.5, r: 1.2 }),
-      ),
-    ),
-    s('path', { class: 'stk-heart-shape', fill: `url(#${id})`, 'stroke-width': 1.2, d: 'M20 34C8 25 2 18.5 2 11.3 2 5.8 6.3 2 11.2 2c3.6 0 6.7 2 8.8 5.1C22.1 4 25.2 2 28.8 2 33.7 2 38 5.8 38 11.3 38 18.5 32 25 20 34z' }),
-  );
-}
-
 // ---------- ux v4: sections, one-action cards, info rows, tips carousel, disclosure, key bubble ----------
 // Pattern: sectionTitle('Ta journée') above a card; one card = one topic = one action
 // (actionLink at the bottom); details folded in disclosure(); one keyBubble per card at most.
 
-/** Centered uppercase, letter-spaced section title ("TA JOURNÉE"). Text is given in normal case. */
+/** Left-aligned 12 px uppercase, letter-spaced section label ("TA JOURNÉE"). Text is given in normal case. */
 export function sectionTitle(text: string): HTMLElement {
   return h('h2', { class: 'sec-title' }, text);
 }
@@ -305,6 +358,8 @@ export interface InfoRowOpts {
   onClick?: () => void;
   /** Right-side node (chip, small button) when the row is not clickable. */
   trail?: Node | null;
+  /** Small pink-wash chip after the title ("à faire"). */
+  badge?: string;
   cls?: string;
 }
 
@@ -313,7 +368,7 @@ export function infoRow(o: InfoRowOpts): HTMLElement {
   const body = [
     iconCircle(o.icon),
     h('span', { class: 'info-main' },
-      h('span', { class: 'info-title' }, o.title),
+      h('span', { class: 'info-title' }, o.title, o.badge ? h('span', { class: 'badge' }, o.badge) : null),
       o.detail !== undefined && o.detail !== null && o.detail !== '' ? h('span', { class: 'info-detail' }, o.detail) : null,
     ),
   ];
@@ -421,11 +476,72 @@ export function disclosure(label: string, content: () => Child, key = label, ope
   return wrap;
 }
 
-/** The one strong figure of a card, in a pink bubble ("1 240 kcal", "J−77"). `tone: 'ink'` for a black bubble. */
-export function keyBubble(value: string, unit?: string, label?: string, tone: 'pink' | 'ink' | 'warn' = 'pink'): HTMLElement {
-  return h('div', { class: `key-bubble kb-${tone}` },
-    h('span', { class: 'kb-value num' }, value),
-    unit ? h('span', { class: 'kb-unit' }, unit) : null,
+export type BubbleTone = 'plain' | 'wash' | 'ink' | 'warn' | 'pink';
+
+/**
+ * The one strong figure of a card ("1 500 kcal restantes").
+ * 'plain' (default): a 28 px League Spartan number, no disc. 'wash': an 88 px pink-wash disc.
+ * 'ink': dark disc (journal only). 'warn': plain, in the warning tone. 'pink' is kept as an alias of 'plain'.
+ */
+export function keyBubble(value: string, unit?: string, label?: string, tone: BubbleTone = 'plain'): HTMLElement {
+  const t = tone === 'pink' ? 'plain' : tone;
+  const cls = t === 'warn' ? 'kb-plain kb-warn' : `kb-${t}`;
+  return h('div', { class: `key-bubble ${cls}` },
+    h('span', { class: 'kb-fig' },
+      h('span', { class: 'kb-value num' }, value),
+      unit ? h('span', { class: 'kb-unit' }, unit) : null),
     label ? h('span', { class: 'kb-label' }, label) : null,
   );
+}
+
+// ---------- check rows ----------
+
+export interface CheckRowOpts {
+  title: Child;
+  detail?: Child;
+  on: boolean;
+  onToggle: () => void;
+  /** Tap on the text (opens details). Without it, the text toggles too. */
+  onOpen?: () => void;
+  /** Right-side node (a small link or button). */
+  trail?: Node | null;
+  /** Accessible name of the check button (defaults to the title text). */
+  label?: string;
+  cls?: string;
+}
+
+const CHECK_PATH = 'M7 12.5l3.2 3.2L17 9';
+
+/**
+ * A hairline row with a round check (28 px inside a 44 px hit area): one tap ticks.
+ * The check draws itself (220 ms) and the row flashes pink-wash.
+ */
+export function checkRow(o: CheckRowOpts): HTMLElement {
+  const titleText = typeof o.title === 'string' ? o.title : undefined;
+  const row = h('div', { class: `check-row${o.on ? ' on' : ''} ${o.cls ?? ''}`.trim() });
+  const toggle = () => { haptic(row); o.onToggle(); };
+  const check = h('button', {
+    class: 'check', type: 'button', 'aria-pressed': o.on ? 'true' : 'false',
+    'aria-label': o.label ?? titleText, onclick: toggle,
+  }, s('svg', { viewBox: '0 0 24 24', width: 28, height: 28, 'aria-hidden': 'true' },
+    s('circle', { class: 'check-ring', cx: 12, cy: 12, r: 11 }),
+    s('path', { class: 'check-mark', d: CHECK_PATH, fill: 'none', 'stroke-width': 2.4, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })));
+  const text = h('button', {
+    class: 'check-main', type: 'button', tabIndex: o.onOpen ? undefined : -1,
+    'aria-hidden': o.onOpen ? undefined : 'true',
+    onclick: o.onOpen ?? toggle,
+  },
+    h('span', { class: 'check-title' }, o.title),
+    o.detail !== undefined && o.detail !== null && o.detail !== '' ? h('span', { class: 'check-detail' }, o.detail) : null,
+    o.onOpen ? h('span', { class: 'sr-only' }, ' · voir le détail') : null,
+  );
+  row.append(check, text);
+  if (o.onOpen) row.append(h('span', { class: 'info-chev', 'aria-hidden': 'true' }, '›'));
+  if (o.trail) row.append(o.trail);
+  return row;
+}
+
+/** Hairline list wrapper for rows (check rows, info rows). */
+export function rowList(...rows: (Node | null | undefined | false)[]): HTMLElement {
+  return h('div', { class: 'row-list' }, rows.filter((x): x is Node => !!x));
 }

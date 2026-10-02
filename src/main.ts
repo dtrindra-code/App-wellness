@@ -47,11 +47,24 @@ const tabbar = h('nav', { class: 'tabbar', 'aria-label': 'Navigation' });
 const app = document.getElementById('app')!;
 app.append(root, tabbar);
 
+/** Scroll position per tab, so coming back to a tab lands where she left it. */
+const scrollPos = new Map<TabId, number>();
+const reducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+
 function go(tab: TabId) {
+  if (tab === current) {
+    // Tapping the active tab: back to the top.
+    window.scrollTo({ top: 0, behavior: reducedMotion() ? 'auto' : 'smooth' });
+    return;
+  }
+  scrollPos.set(current, window.scrollY);
   current = tab;
   try { localStorage.setItem(TAB_KEY, tab); } catch { /* ignore */ }
   render();
-  window.scrollTo(0, 0);
+  window.scrollTo(0, scrollPos.get(tab) ?? 0);
+  if (!reducedMotion()) {
+    root.animate?.([{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }], { duration: 160, easing: 'ease-out' });
+  }
 }
 
 function renderTabs() {
@@ -60,6 +73,7 @@ function renderTabs() {
       TABS.map((t) =>
         h('button', {
           class: 'tab' + (t.id === current ? ' on' : ''),
+          type: 'button',
           'aria-current': t.id === current ? 'page' : undefined,
           onclick: () => go(t.id),
         }, icon(t.icon), t.label),

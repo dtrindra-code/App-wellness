@@ -3,7 +3,7 @@
 // period change, chart + "Ajouter une pesée", composition and history folded), then
 // TON ASSIETTE · TON SPORT · TON ÉQUILIBRE · TON CYCLE (src/screens/progress-cards.ts).
 
-import type { Screen } from './types';
+import type { Screen, ScreenCtx } from './types';
 import type { BodyComp, DayLog } from '../types';
 import { store } from '../store';
 import {
@@ -230,7 +230,7 @@ function periodBar(ps: PeriodStats): HTMLElement {
       if (!root) return;
       const y = window.scrollY;
       root.replaceChildren();
-      renderWeight(root, { go: () => {} });
+      renderWeight(root, lastCtx);
       window.scrollTo(0, y);
     }),
     h('p', { class: 'small muted pg-range' }, empty ? `Ton plan démarre le ${fmtSince(store.profile.startDate)}.` : range + cmp),
@@ -244,7 +244,7 @@ function summary(ps: PeriodStats): HTMLElement {
   // Pregnancy mode: no loss goal anywhere, the numbers stay for information.
   const pregnant = cycleSettings(p).pregnant;
   const stat = (value: string, unit: string, label: string) =>
-    h('div', { class: 'stat' }, h('span', { class: 'value', style: 'font-size:1.15rem' }, value, unit ? h('small', null, unit) : null), h('span', { class: 'label' }, label));
+    h('div', { class: 'stat' }, h('span', { class: 'value', style: 'font-size:var(--fs-18)' }, value, unit ? h('small', null, unit) : null), h('span', { class: 'label' }, label));
 
   const slope = slopePerDay(ws, 14);
   const t = today();
@@ -471,7 +471,11 @@ function historyList(ws: { date: string; weight: number }[], rows: { date: strin
 
 // ---------- screen ----------
 
+/** Last navigation context (local re-renders keep the real one). */
+let lastCtx: ScreenCtx = { go: () => {} };
+
 export const renderWeight: Screen = (root, ctx) => {
+  lastCtx = ctx;
   const ps = periodStats(period, today(), store.state);
   const cyc = cycleCard(ps, store.state);
   root.append(
@@ -479,10 +483,9 @@ export const renderWeight: Screen = (root, ctx) => {
     periodBar(ps),
     sectionTitle('Le mot du coach'), coachProgressCard(ps, store.state),
     sectionTitle('Ton poids'), summary(ps), chartCard(), historyCard(),
-    sectionTitle('Ton assiette'), plateCard(ps),
+    sectionTitle('Ton assiette'), plateCard(ps, () => ctx.go('food')),
     sectionTitle('Ton sport'), sportCard(ps, store.state),
     sectionTitle('Ton équilibre'), balanceCard(ps),
     cyc ? sectionTitle('Ton cycle') : '', cyc ?? '',
   );
-  void ctx;
 };

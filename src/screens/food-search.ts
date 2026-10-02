@@ -35,6 +35,14 @@ export function slotForNow(d = new Date()): MealSlot {
   return 'diner';
 }
 
+/** "au déjeuner", "à la collation"… */
+const SLOT_TO: Record<MealSlot, string> = {
+  'petit-dej': 'au petit-déj',
+  dejeuner: 'au déjeuner',
+  collation: 'à la collation',
+  diner: 'au dîner',
+};
+
 const fmt1 = (n: number) => (Math.round(n * 10) / 10).toLocaleString('fr-FR', { maximumFractionDigits: 1 });
 
 /** Something the user can pick: a generic food, an OFF product, or a past meal. */
@@ -306,8 +314,17 @@ export function openFoodSearch(date: string, slot?: MealSlot, opts: FoodSearchOp
           class: 'btn-icon fs-quick', type: 'button', 'aria-label': `Ajouter ${pick.name}`,
           onclick: async () => {
             const g = quickG ?? pick.defaultG;
-            await add(pick, g);
-            toast(`${pick.name} · ${fmtInt(g)} ${unit(pick)} ajouté`);
+            const meal = await add(pick, g);
+            toast(`Ajouté ${SLOT_TO[meal.slot]} · ${fmtInt(g)} ${unit(pick)}`, {
+              action: {
+                label: 'Annuler',
+                run: () => {
+                  const i = added.indexOf(meal);
+                  if (i >= 0) added.splice(i, 1);
+                  void store.updateDay(date, (d) => { d.meals = d.meals.filter((m) => m.id !== meal.id); }).then(drawBasket);
+                },
+              },
+            });
             drawBasket();
           },
         }, '+'),
@@ -338,8 +355,8 @@ export function openFoodSearch(date: string, slot?: MealSlot, opts: FoodSearchOp
         }).filter((x): x is HTMLElement => !!x);
         const fr = toRows(frequents), re = toRows(recents);
         results.replaceChildren(
-          fr.length ? group('Fréquents', fr) : '',
           re.length ? group('Récents', re) : '',
+          fr.length ? group('Fréquents', fr) : '',
           !fr.length && !re.length
             ? h('div', { class: 'fs-hint' },
                 h('p', null, 'Tape ce que tu as mangé, même approximatif : « pâtes », « yaourt », « kebab »…'),

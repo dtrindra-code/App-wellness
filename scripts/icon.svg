@@ -1,17 +1,18 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <!-- Pep's: the original sun-on-the-horizon mark in the brand colours (pink, cream, black). -->
+  <!-- Pep's ("Évoluer"): a cream sun rising over an ink horizon, on the brand pink.
+       Thick strokes (24 on a 512 base) so the mark still reads at 60 px. -->
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#FFD7E7"/>
       <stop offset="1" stop-color="#FFC8DD"/>
     </linearGradient>
-    <clipPath id="sky"><rect width="512" height="284"/></clipPath>
+    <clipPath id="sky"><rect width="512" height="300"/></clipPath>
     <clipPath id="shape"><rect width="512" height="512" rx="{{RX}}"/></clipPath>
   </defs>
   <g clip-path="url(#shape)">
     <rect width="512" height="512" fill="url(#bg)"/>
-    <circle cx="256" cy="284" r="78" fill="#FFF6D3" stroke="#111111" stroke-width="6" clip-path="url(#sky)"/>
-    <rect x="112" y="278" width="288" height="16" rx="8" fill="#111111"/>
-    <path d="M152 346 q26 -20 52 0 t52 0 t52 0 t52 0" fill="none" stroke="#111111" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="256" cy="300" r="118" fill="#FFF6D3" stroke="#2E2A5C" stroke-width="24" clip-path="url(#sky)"/>
+    <rect x="80" y="288" width="352" height="28" rx="14" fill="#2E2A5C"/>
+    <path d="M172 376 q21 -18 42 0 t42 0 t42 0 t42 0" fill="none" stroke="#2E2A5C" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
   </g>
 </svg>

@@ -8,29 +8,27 @@ import type { Screen, ScreenCtx } from './types';
 import type { Profile } from '../types';
 import { store } from '../store';
 import {
-  h, gearIcon, screenTitle, heartSticker, toast, segmented,
-  sectionTitle, infoRow, iconCircle, disclosure, keyBubble, ICON,
+  h, gearIcon, screenTitle, toast, segmented, openSheet,
+  sectionTitle, infoRow, iconCircle, disclosure, keyBubble, checkRow, rowList, ICON,
 } from '../lib/ui';
 import { today, daysBetween, fmtDayMonth, fmtLong, mondayOf } from '../lib/dates';
 import { cycleOn, cycleSettings, adviceFor, phaseLabel, TTC_TIPS, PREGNANCY_NOTE } from '../lib/cycle';
 import type { CycleInfo } from '../lib/cycle';
-import { cycleLog, hereSentence, openPeriodSheet, trackCard } from './cycle-calendar';
+import { hereSentence, openPeriodSheet, trackCard } from './cycle-calendar';
 import {
   HABITS, habitScore, weekHabitStats, sleepWeightInsight, recentWellbeing,
   COHERENCE_TARGET,
 } from '../lib/habits';
 import { openBreathing } from './breathing';
-import { slotForNow } from './food-search';
 import { cycleRing } from './today-ring';
+import { cycleStrip } from './cycle-strip';
 import { journeySection } from './journey-balance';
-import { guideSafe, openIdeaSheet } from './today-guide';
+import { guideSafe, openFeelSheet } from './today-guide';
 import {
   garminForm, lateBlock, toggleHabit, popCls, recoveryLevel, recoveryLine, RECOVERY_LABEL, GFIELDS, fmtGVal,
 } from './today-shared';
 
 // ---------- transient UI state ----------
-/** Habit keys whose "why" is unfolded. */
-const whyOpen = new Set<string>();
 let confirmPregnancyOff = false;
 /** Tab of the cycle card. */
 type CycTab = 'plate' | 'reg' | 'sport';
@@ -48,14 +46,15 @@ export const renderBalance: Screen = (root, ctx) => {
   root.append(...journeySection(date));
   if (cs.tracking) {
     root.append(sectionTitle(cs.pregnant ? 'Ta grossesse' : 'Ton cycle'), cs.pregnant ? pregnancyCard(date) : cycleCard(date, p, info, ctx));
+    // Calendar & history sit right under the cycle card (no separate section).
+    if (!cs.pregnant) root.append(trackCard(date));
   }
   root.append(
     sectionTitle('Tes piliers'), pillarsCard(date),
     sectionTitle('Ta récup'), recoveryCard(date),
-    sectionTitle('Respirer'), breathingCard(date),
+    // Breathing + stress share one card: two hairline rows, no extra section.
+    sectionTitle('Respirer, souffler'), h('section', { class: 'card ux solo bal-calm' }, breathingRow(date), cortisolRow()),
   );
-  if (cs.tracking && !cs.pregnant) root.append(sectionTitle('Ton suivi'), trackCard(date));
-  root.append(sectionTitle('Stress et cortisol'), cortisolCard());
 };
 
 // ---------- header ----------
@@ -68,9 +67,9 @@ function header(date: string, ctx: ScreenCtx, info: CycleInfo | null): HTMLEleme
   return h('header', { class: 'screen-head' },
     h('div', { class: 'stack', style: 'gap:4px' },
       screenTitle('Équilibre'),
-      h('p', { class: 'subtitle' }, eyebrow),
+      h('p', { class: 'subtitle italic' }, eyebrow),
     ),
-    h('button', { class: 'btn-icon', 'aria-label': 'Réglages', type: 'button', onclick: () => ctx.go('settings') }, gearIcon()),
+    h('button', { class: 'btn-icon', 'aria-label': 'Réglages', type: 'button', style: 'background:none', onclick: () => ctx.go('settings') }, gearIcon()),
   );
 }
 
@@ -83,7 +82,7 @@ function cycleCard(date: string, p: Profile, info: CycleInfo | null, ctx: Screen
     return h('section', { class: 'card ux solo' },
       infoRow({ icon: ICON.cycle, title: 'Ton cycle', detail: 'Note le 1er jour de tes dernières règles : l’app estimera ta phase, ton ovulation et tes prochaines règles.' }),
       h('button', { class: 'btn primary block bal-big', type: 'button', onclick: () => openPeriodSheet(date, true) }, 'Noter mes dernières règles'),
-      disclosure('Noter aujourd’hui', () => cycleLog(date, { title: null, explicit: false }), 'bal-log', 'Fermer le suivi du jour'),
+      h('button', { class: 'btn sm', type: 'button', style: 'align-self:flex-start', onclick: () => openFeelSheet(date) }, 'Noter un symptôme'),
     );
   }
 
@@ -101,12 +100,7 @@ function cycleCard(date: string, p: Profile, info: CycleInfo | null, ctx: Screen
         n.favour.length ? h('div', { class: 'stack', style: 'gap:4px' }, h('span', { class: 'eyebrow' }, 'À privilégier'), h('ul', { class: 'bal-list small' }, n.favour.map((x) => h('li', null, x)))) : null,
         n.limit.length ? h('div', { class: 'stack', style: 'gap:4px' }, h('span', { class: 'eyebrow' }, 'À limiter'), h('ul', { class: 'bal-list small' }, n.limit.map((x) => h('li', null, x)))) : null,
         n.ideas.length
-          ? h('div', { class: 'stack', style: 'gap:6px' },
-              h('span', { class: 'eyebrow' }, 'Des idées'),
-              h('div', { class: 'dc-ideas' }, n.ideas.map((i) => h('button', { class: 'dc-idea', type: 'button', 'aria-label': `Ajouter ${i.name}`, onclick: () => openIdeaSheet(date, i, slotForNow()) },
-                h('span', { class: 'dc-idea-main' }, h('span', { class: 'dc-idea-name' }, i.name),
-                  i.kcal !== undefined ? h('span', { class: 'dc-idea-sub num' }, `${Math.round(i.kcal)} kcal${i.protein !== undefined ? ` · ${Math.round(i.protein)} g prot.` : ''}`) : null),
-                h('span', { class: 'dc-idea-add', 'aria-hidden': 'true' }, '+')))))
+          ? h('button', { class: 'dc-link', type: 'button', style: 'align-self:flex-start', onclick: () => ctx.go('food') }, `${n.ideas.length} idées de repas sur Repas ›`)
           : null,
         n.ttcNote ? h('p', { class: 'small' }, h('strong', null, cs.ttc ? 'Essai bébé : ' : 'Bon à savoir : '), n.ttcNote) : null,
         n.weight ? h('p', { class: 'small muted' }, n.weight) : null,
@@ -116,7 +110,7 @@ function cycleCard(date: string, p: Profile, info: CycleInfo | null, ctx: Screen
       const tips = guide?.regulate ?? [];
       if (!tips.length) return h('p', { class: 'small' }, adv.body);
       return h('div', { class: 'stack', style: 'gap:10px' },
-        tips.map((tp) => infoRow({ icon: tp.action === 'breathing' ? ICON.wave : tp.action === 'sleep' ? ICON.moon : ICON.leaf, title: tp.title, detail: tp.why ?? tp.detail })),
+        rowList(...tips.map((tp) => infoRow({ icon: tp.action === 'breathing' ? ICON.wave : tp.action === 'sleep' ? ICON.moon : ICON.leaf, title: tp.title, detail: tp.why ?? tp.detail }))),
         h('p', { class: 'small muted' }, 'À cocher au fil de la journée sur Aujourd’hui.'),
       );
     }
@@ -135,19 +129,20 @@ function cycleCard(date: string, p: Profile, info: CycleInfo | null, ctx: Screen
   };
   paintTabs();
 
-  const card = h('section', { class: 'card ux paper bal-cyc' },
-    // Same ring as the Today hero, bigger: one marker for "tu es ici".
+  const card = h('section', { class: 'card ux bal-cyc' },
+    // Same ring as the Today row, bigger: one marker for "tu es ici".
     h('div', { class: 'bal-cyc-top' },
-      cycleRing(info, { size: 150, periodLength: cs.periodLength, label: here, legend: true }),
+      cycleRing(info, { size: 120, periodLength: cs.periodLength, label: here, legend: true }),
       h('div', { class: 'bal-here-text' },
         h('span', { class: 'eyebrow' }, 'Tu es ici'),
         h('h2', null, guide?.label ?? phaseLabel(info.phase)),
         h('p', { class: 'italic' }, guide?.dayLabel ?? `J${info.day} sur ~${info.length}`),
       ),
     ),
-    h('p', { class: 'small' }, here),
     h('p', { class: 'bal-cyc-meaning' }, guide?.meaning ?? adv.headline),
     disclosure('Voir les dates', () => [
+      h('p', { class: 'small' }, here),
+      cycleStrip(date, info),
       h('div', { class: 'grid-3 bal-dates' },
         stat('Prochaines règles', `~${fmtDayMonth(info.nextPeriod)}`),
         stat(info.ovulationFromLH ? 'Ovulation (test LH)' : 'Ovulation', `${info.ovulationFromLH ? '' : '~'}${fmtDayMonth(info.ovulation)}`),
@@ -156,8 +151,7 @@ function cycleCard(date: string, p: Profile, info: CycleInfo | null, ctx: Screen
       legendRow(),
       h('p', { class: 'small muted' }, 'Dates estimées d’après tes cycles notés : chaque cycle peut varier.'),
     ], 'bal-dates', 'Replier'),
-    tabsSlot,
-    tabSlot,
+    disclosure('Assiette, régulation et sport pour ta phase', () => [tabsSlot, tabSlot], 'bal-cyc-tabs', 'Replier'),
   );
 
   if (info.phase === 'retard') {
@@ -175,10 +169,9 @@ function cycleCard(date: string, p: Profile, info: CycleInfo | null, ctx: Screen
   }
 
   card.append(
-    disclosure('Noter aujourd’hui', () => cycleLog(date, { title: null, explicit: false }), 'bal-log', 'Fermer le suivi du jour'),
-    h('div', { class: 'row between' },
+    h('div', { class: 'row wrap', style: 'gap:8px' },
+      h('button', { class: 'btn sm', type: 'button', onclick: () => openFeelSheet(date) }, 'Noter un symptôme'),
       h('button', { class: 'dc-link', type: 'button', onclick: () => openPeriodSheet(date, false) }, 'Début de règles un autre jour'),
-      h('button', { class: 'dc-link', type: 'button', onclick: () => ctx.go('today') }, 'Mes actions du jour ›'),
     ),
   );
   return card;
@@ -247,38 +240,16 @@ function pillarsCard(date: string): HTMLElement {
   const score = habitScore(day);
   const week = weekHabitStats(store.state.days, mondayOf(date));
 
-  const toggle = (key: string) => toggleHabit(date, key);
-
   return h('section', { class: 'card ux solo bal-pillars' },
-    heartSticker('bal-heart'),
-    h('div', { class: 'td-score' },
-      h('span', { class: 'big-number' }, String(score)),
-      h('span', { class: 'muted num' }, `/ ${HABITS.length} aujourd’hui`),
+    h('div', { class: 'bal-score' },
+      h('span', { class: 'num' }, `${score}/${HABITS.length}`),
+      h('span', { class: 'italic muted' }, 'aujourd’hui · pas besoin de tout cocher'),
     ),
-    h('p', { class: 'small muted', style: 'text-align:center' }, 'Pas besoin de tout cocher. Touche un pilier pour savoir pourquoi il aide.'),
-    h('div', { class: 'bal-habits' },
-      HABITS.map((hb) => {
-        const on = !!day.habits?.[hb.key];
-        const open = whyOpen.has(hb.key);
-        return h('div', { class: 'bal-habit' + (on ? ' on' : '') },
-          h('button', { class: 'bal-check' + (on ? ' on' : '') + popCls(`hb-${hb.key}`), type: 'button', 'aria-pressed': on ? 'true' : 'false', 'aria-label': hb.label, onclick: () => toggle(hb.key) }, on ? '✓' : ''),
-          h('div', { class: 'main' },
-            h('button', {
-              class: 'bal-label', type: 'button', 'aria-expanded': open ? 'true' : 'false',
-              onclick: (e: Event) => {
-                const btn = e.currentTarget as HTMLElement;
-                const why = btn.nextElementSibling as HTMLElement;
-                const nowOpen = !whyOpen.has(hb.key);
-                if (nowOpen) whyOpen.add(hb.key); else whyOpen.delete(hb.key);
-                why.hidden = !nowOpen;
-                btn.setAttribute('aria-expanded', nowOpen ? 'true' : 'false');
-              },
-            }, hb.label),
-            h('p', { class: 'sub', hidden: !open }, hb.why),
-          ),
-        );
-      }),
-    ),
+    rowList(...HABITS.map((hb) => checkRow({
+      title: hb.label, on: !!day.habits?.[hb.key], cls: popCls(`hb-${hb.key}`).trim(),
+      onToggle: () => toggleHabit(date, hb.key),
+      onOpen: () => openSheet(hb.label, h('p', null, hb.why)),
+    }))),
     h('div', { class: 'bal-week', 'aria-label': 'Piliers cette semaine' },
       week.days.map((d, i) => h('div', { class: 'bal-week-day' + (d.date === date ? ' today' : '') },
         h('div', { class: 'bal-week-bar' }, h('span', { style: `height:${Math.round((d.done / HABITS.length) * 100)}%` })),
@@ -290,20 +261,16 @@ function pillarsCard(date: string): HTMLElement {
 
 // ---------- 3. breathing ----------
 
-function breathingCard(date: string): HTMLElement {
+function breathingRow(date: string): HTMLElement {
   const n = store.getDay(date).wellbeing?.breathing ?? 0;
-  const dots = Array.from({ length: COHERENCE_TARGET }, (_, i) => h('span', { class: 'week-dot' + (i < n ? ' on' : ''), 'aria-hidden': 'true' }));
-  return h('section', { class: 'card ux solo bal-breathe-card' },
-    h('button', { class: 'bal-breathe', type: 'button', onclick: () => openBreathing(date) },
-      iconCircle(ICON.wave, 'lg'),
-      h('span', { class: 'bal-breathe-main' },
-        h('span', { class: 'bal-breathe-title' }, 'Cohérence cardiaque'),
-        h('span', { class: 'bal-breathe-sub' }, 'Commencer · 5 min'),
-      ),
-    ),
-    h('div', { class: 'row', style: 'justify-content:center;gap:8px' }, dots),
-    h('p', { class: 'small muted', style: 'text-align:center' },
-      n ? `${Math.min(n, 99)} séance${n > 1 ? 's' : ''} aujourd’hui${n < COHERENCE_TARGET ? ` sur ${COHERENCE_TARGET}` : ''}` : 'Idéal : matin, midi et fin d’après-midi.'),
+  return (
+    h('div', { class: 'bal-breathe-row info-row' },
+      iconCircle(ICON.wave),
+      h('span', { class: 'info-main' },
+        h('span', { class: 'info-title' }, 'Cohérence cardiaque'),
+        h('span', { class: 'info-detail' },
+          n ? `${Math.min(n, 99)} séance${n > 1 ? 's' : ''} aujourd’hui${n < COHERENCE_TARGET ? ` sur ${COHERENCE_TARGET}` : ''}` : '5 min · idéal matin, midi et fin d’après-midi')),
+      h('button', { class: 'btn sm ink', type: 'button', onclick: () => openBreathing(date) }, 'Commencer'))
   );
 }
 
@@ -349,8 +316,8 @@ function recoveryCard(date: string): HTMLElement {
         ? [recoveryLine(date, days), ...shown.filter((f) => f.key === 'restingHr' || f.key === 'steps').map((f) => `${f.label} ${fmtGVal(f, wb[f.key] as number)}${f.unit ? ' ' + f.unit : ''}`)].filter(Boolean).join(' · ')
         : 'Sommeil, Body Battery, stress… de la nuit et d’hier',
     }),
-    rows.length ? h('div', { class: 'stack', style: 'gap:8px' }, rows) : h('p', { class: 'small muted' }, 'Note ton sommeil et ton stress quelques jours : ici apparaîtront tes nuits courtes, tes jours de stress et leur lien avec ton poids.'),
-    disclosure(shown.length ? 'Modifier mes chiffres' : 'Saisir mes chiffres', () => garminForm(date, () => toast('Chiffres enregistrés')), 'bal-garmin', 'Replier'),
+    rows.length ? rowList(...rows) : h('p', { class: 'small muted' }, lvl ? 'Encore quelques jours de chiffres et tes nuits courtes, tes jours de stress et leur lien avec ton poids apparaîtront ici.' : 'Pas de chiffres Garmin aujourd’hui.'),
+    disclosure(shown.length ? 'Modifier mes chiffres' : 'Saisir à la main', () => garminForm(date, () => toast('Chiffres enregistrés')), 'bal-garmin', 'Replier'),
   );
 }
 
@@ -360,10 +327,11 @@ function insight(icon: string, text: string, sub?: string): HTMLElement {
 
 // ---------- 6. cortisol ----------
 
-function cortisolCard(): HTMLElement {
-  return h('section', { class: 'card ux solo' },
-    infoRow({ icon: ICON.leaf, title: 'Le stress pèse aussi sur la balance', detail: 'Le cortisol pousse à stocker et donne faim. Voici ce qui aide.' }),
-    disclosure('Ce qui fait baisser le stress', () => h('ul', { class: 'bal-list small' },
+function cortisolRow(): HTMLElement {
+  const open = () => openSheet('Stress et cortisol', h('div', { class: 'stack' },
+    h('p', null, 'Le cortisol pousse à stocker et donne faim. Voici ce qui aide.'),
+    h('h3', null, 'Ce qui fait baisser le stress'),
+    h('ul', { class: 'bal-list small' },
       h('li', null, 'Des nuits de 7 h ou plus, à heures régulières'),
       h('li', null, 'La lumière du jour le matin'),
       h('li', null, 'La cohérence cardiaque'),
@@ -372,13 +340,15 @@ function cortisolCard(): HTMLElement {
       h('li', null, 'Ne pas sauter de repas'),
       h('li', null, 'Moins de thé l’après-midi (théine), plutôt des tisanes'),
       h('li', null, 'Peu ou pas d’alcool'),
-    ), 'bal-cort-down', 'Replier'),
-    disclosure('Ce qui le fait grimper', () => h('ul', { class: 'bal-list small' },
+    ),
+    h('h3', null, 'Ce qui le fait grimper'),
+    h('ul', { class: 'bal-list small' },
       h('li', null, 'Les nuits courtes'),
       h('li', null, 'Les gros déficits caloriques'),
       h('li', null, 'Les séances intenses enchaînées'),
       h('li', null, 'Les écrans tard le soir'),
-    ), 'bal-cort-up', 'Replier'),
+    ),
     h('p', { class: 'small muted' }, 'Pas de complément « anti-cortisol » (ashwagandha…) en essai bébé ou grossesse : demande à ton médecin.'),
-  );
+  ));
+  return infoRow({ icon: ICON.leaf, title: 'Stress et cortisol', detail: 'Ce qui le fait baisser, ce qui le fait grimper', onClick: open });
 }

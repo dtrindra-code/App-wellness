@@ -9,12 +9,12 @@
 // so it stays on the device and travels only inside store.exportJSON() (manual export
 // and the encrypted backup). Coach messages never quote what she wrote.
 
-import type { AppState, DayLog, JourneyDay, JourneySettings, Profile } from '../types';
+import type { AppState, CheckpointKey, DayLog, JourneyCheckpoint, JourneyDay, JourneySettings, Profile } from '../types';
 import { store } from '../store';
 import { addDays, daysBetween, mondayOf, today, weekday } from './dates';
 import { cycleOn, cycleSettings } from './cycle';
-import { CHAPTERS, DEFAULT_RULES, NEEDS, PROMPTS, RULES, promptFor } from '../data/journey';
-import type { NeedKey, PromptPhase } from '../data/journey';
+import { CHAPTERS, DEFAULT_RULES, EMOTIONS, LIFE_DOMAINS, MODULES, NEEDS, PROMPTS, RULES, checkpointFor, promptFor } from '../data/journey';
+import type { EmotionKey, NeedKey, PromptPhase } from '../data/journey';
 
 export const JOURNEY_DAYS = 60;
 export const CHAPTER_DAYS = 15;
@@ -107,7 +107,7 @@ export function promptOn(date: string, p: Profile = store.profile, days: Days = 
     return { day: n, ...promptFor(n, phaseForPrompt(date, p, days)) };
   } catch {
     const base = PROMPTS.find((x) => x.day === n);
-    return base ? { day: n, title: base.title, question: base.question, chips: base.chips, tip: base.tip } : null;
+    return base ? { day: n, title: base.title, question: base.question, chips: base.chips, tip: base.tip, questions: [{ q: base.question, chips: base.chips }], themeLabel: '', module: undefined } : null;
   }
 }
 
@@ -252,7 +252,147 @@ export function saveAnswer(date: string, answer: JourneyDay['answer'] | undefine
   setJourney(date, (j) => { if (answer) j.answer = answer; else delete j.answer; });
 }
 
-export const isAnswered = (day: DayLog | undefined) => !!day?.journey?.answer && !day.journey.answer.skipped;
+type Answer = NonNullable<JourneyDay['answer']>;
+
+/** Text of question `i` (old pages kept one `text`: it belongs to the first question). */
+export function answerText(a: JourneyDay['answer'] | undefined, i: number): string {
+  if (!a) return '';
+  const v = a.answers?.[i];
+  if (typeof v === 'string') return v;
+  return i === 0 && !a.answers ? a.text ?? '' : '';
+}
+
+/** Answers per question, old format included. */
+export function answerTexts(a: JourneyDay['answer'] | undefined, count: number): string[] {
+  return Array.from({ length: count }, (_, i) => answerText(a, i));
+}
+
+function cleanAnswer(a: Answer): Answer | undefined {
+  const answers = (a.answers ?? []).map((x) => x ?? '');
+  while (answers.length && !answers[answers.length - 1].trim()) answers.pop();
+  const chips = [...(a.chips ?? [])];
+  const out: Answer = { chips };
+  if (answers.length) { out.answers = answers; if (answers[0].trim()) out.text = answers[0].trim(); }
+  if (a.skipped && !chips.length && !answers.length) out.skipped = true;
+  return chips.length || answers.length || out.skipped ? out : undefined;
+}
+
+/** Save the text of question `i` of the day's page (empty text clears it). */
+export function saveQuestion(date: string, i: number, text: string) {
+  setJourney(date, (j) => {
+    const prev = j.answer;
+    const answers = prev ? answerTexts(prev, Math.max(i + 1, prev.answers?.length ?? 1)) : [];
+    while (answers.length <= i) answers.push('');
+    answers[i] = text.replace(/\s+$/, '');
+    const next = cleanAnswer({ chips: prev && !prev.skipped ? prev.chips ?? [] : [], answers });
+    if (next) j.answer = next; else delete j.answer;
+  });
+}
+
+/** Toggle a quick chip of the first question. */
+export function toggleAnswerChip(date: string, chip: string) {
+  setJourney(date, (j) => {
+    const prev = j.answer;
+    const chips = new Set(prev && !prev.skipped ? prev.chips ?? [] : []);
+    if (chips.has(chip)) chips.delete(chip); else chips.add(chip);
+    const answers = prev ? answerTexts(prev, Math.max(1, prev.answers?.length ?? 1)) : [];
+    const next = cleanAnswer({ chips: [...chips], answers });
+    if (next) j.answer = next; else delete j.answer;
+  });
+}
+
+/** "Passer": the page is skipped (what was written is kept only if there is some). */
+export function skipPage(date: string) {
+  setJourney(date, (j) => {
+    const a = j.answer;
+    if (a && ((a.chips?.length ?? 0) > 0 || answerTexts(a, 3).some((t) => t.trim()))) return;
+    j.answer = { chips: [], skipped: true };
+  });
+}
+
+export function unskipPage(date: string) {
+  setJourney(date, (j) => { if (j.answer?.skipped) delete j.answer; });
+}
+
+export const isAnswered = (day: DayLog | undefined) => {
+  const a = day?.journey?.answer;
+  if (!a || a.skipped) return false;
+  return (a.chips?.length ?? 0) > 0 || !!a.text?.trim() || (a.answers ?? []).some((t) => !!t?.trim());
+};
+
+// ---------- emotion wheel ----------
+
+export function emotionFamily(key: string | undefined) {
+  return EMOTIONS.find((e) => e.key === key);
+}
+
+/** Set / clear the morning emotion. Same family again without nuance clears it. */
+export function setEmotion(date: string, family: EmotionKey | null, nuance?: string) {
+  setJourney(date, (j) => {
+    if (!family) { delete j.emotion; return; }
+    j.emotion = nuance ? { family, nuance } : { family };
+  });
+}
+
+export function emotionLabel(e: JourneyDay['emotion'] | undefined): string | null {
+  const f = emotionFamily(e?.family);
+  if (!f) return null;
+  return e?.nuance ? `${f.label} · ${e.nuance.toLocaleLowerCase('fr-FR')}` : f.label;
+}
+
+// ---------- checkpoints (day 0 · 30 · 60) ----------
+
+export const CHECKPOINT_DAYS = [0, 30, 60] as const;
+
+export function checkpointData(key: CheckpointKey, p: Profile = store.profile): JourneyCheckpoint {
+  return journeyOf(p)?.checkpoints?.[key] ?? {};
+}
+
+export const checkpointDone = (key: CheckpointKey, p: Profile = store.profile) => !!checkpointData(key, p).doneAt;
+
+/** Merge `patch` into checkpoint `key` (answers are merged too; undefined removes a field). */
+export function saveCheckpoint(key: CheckpointKey, patch: Partial<JourneyCheckpoint>) {
+  const j = journeyOf(store.profile);
+  if (!j) return;
+  const cur: JourneyCheckpoint = { ...(j.checkpoints?.[key] ?? {}) };
+  for (const [k, v] of Object.entries(patch) as [keyof JourneyCheckpoint, unknown][]) {
+    if (k === 'answers' && v && typeof v === 'object') {
+      const ans = { ...(cur.answers ?? {}) };
+      for (const [ak, av] of Object.entries(v as Record<string, string | undefined>)) {
+        if (av === undefined || !String(av).trim()) delete ans[ak]; else ans[ak] = String(av);
+      }
+      if (Object.keys(ans).length) cur.answers = ans; else delete cur.answers;
+    } else if (v === undefined) {
+      delete cur[k];
+    } else {
+      (cur as Record<string, unknown>)[k] = v;
+    }
+  }
+  void store.saveProfile({ journey: { ...j, checkpoints: { ...(j.checkpoints ?? {}), [key]: cur } } });
+}
+
+/** Checkpoint shown instead of the day's page (day 30 and 60). */
+export function checkpointOnDay(n: number | null) {
+  return n === 30 || n === 60 ? checkpointFor(n) : undefined;
+}
+
+/** Life wheel values, clamped 0–10, only known domains. */
+export function wheelValues(w: Record<string, number> | undefined): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const d of LIFE_DOMAINS) {
+    const v = w?.[d.key];
+    if (typeof v === 'number' && Number.isFinite(v)) out[d.key] = Math.max(0, Math.min(10, Math.round(v)));
+  }
+  return out;
+}
+
+/** The most recent filled wheel ("now") and the day-0 one. */
+export function wheelsNowAndStart(p: Profile = store.profile): { start: Record<string, number> | null; now: Record<string, number> | null; nowKey: CheckpointKey | null } {
+  const has = (k: CheckpointKey) => Object.keys(wheelValues(checkpointData(k, p).wheel)).length > 0;
+  const start = has('0') ? wheelValues(checkpointData('0', p).wheel) : null;
+  const nowKey = (['60', '30'] as CheckpointKey[]).find(has) ?? null;
+  return { start, now: nowKey ? wheelValues(checkpointData(nowKey, p).wheel) : null, nowKey };
+}
 
 // ---------- start / settings ----------
 
@@ -311,7 +451,7 @@ export function journeyStats(date: string = today(), state: AppState = store.sta
     const ok = dayScore(d, state).success;
     if (ok) success++;
     if (d < date || ok || raw > JOURNEY_DAYS) elapsed++;
-    if (isAnswered(state.days[d])) answered++;
+    if (isAnswered(state.days[d]) || ((n === 30 || n === 60) && checkpointDone(String(n) as CheckpointKey, state.profile))) answered++;
   }
   let streak = 0;
   if (day >= 1) {
@@ -345,17 +485,24 @@ export interface JournalEntry {
   title: string;
   question: string;
   chips: string[];
+  /** All the answers joined (used to rank highlights). */
   text?: string;
+  /** Question → answer, in order (only the answered ones). */
+  qa?: { q: string; a: string }[];
 }
 
 export function entriesOf(dates: string[], state: AppState = store.state): JournalEntry[] {
   const out: JournalEntry[] = [];
   for (const d of dates) {
     const a = state.days[d]?.journey?.answer;
-    if (!a || a.skipped) continue;
+    if (!isAnswered(state.days[d]) || !a) continue;
     const pr = promptOn(d, state.profile, state.days);
     if (!pr) continue;
-    out.push({ day: pr.day, date: d, title: pr.title, question: pr.question, chips: a.chips ?? [], text: a.text });
+    const qs = pr.questions?.length ? pr.questions : [{ q: pr.question }];
+    const texts = answerTexts(a, Math.max(qs.length, a.answers?.length ?? 0));
+    const qa = texts.map((t, i) => ({ q: qs[i]?.q ?? '', a: t.trim() })).filter((x) => x.a);
+    const joined = qa.map((x) => x.a).join('\n');
+    out.push({ day: pr.day, date: d, title: pr.title, question: pr.question, chips: a.chips ?? [], ...(joined ? { text: joined } : {}), qa });
   }
   return out;
 }
@@ -495,4 +642,100 @@ export function finishReset(sunday: string) {
     if (!Object.keys(r).length) r.done = {};
     d.journeyReset = r;
   });
+}
+
+// ---------- garden map ("Ton parcours en un coup d'œil") ----------
+
+export type MapStatus = 'bloom' | 'seed' | 'today' | 'future' | 'missed';
+
+export interface MapDay {
+  /** 0 (point de départ) … 60. */
+  day: number;
+  date: string;
+  /** bloom: day réussie · seed: something done, not réussie · missed: past, nothing noted · today · future. */
+  status: MapStatus;
+  /** Every 7th day: a sprout (one week grown). */
+  sprout: boolean;
+  chapter: 1 | 2 | 3 | 4;
+  checkpoint?: 0 | 30 | 60;
+  module?: string;
+}
+
+/** The 61 stops of the garden path (day 0 + days 1 … 60) as seen on `date`. */
+export function journeyMap(date: string = today(), state: AppState = store.state): MapDay[] {
+  const j = journeyOf(state.profile);
+  const out: MapDay[] = [];
+  const start = j?.startDate ?? addDays(date, 1);
+  const started = !!j && date >= start;
+  out.push({
+    day: 0, date: addDays(start, -1),
+    status: j && checkpointDone('0', state.profile) ? 'bloom' : started ? 'missed' : 'future',
+    sprout: false, chapter: 1, checkpoint: 0,
+  });
+  for (let n = 1; n <= JOURNEY_DAYS; n++) {
+    const d = addDays(start, n - 1);
+    const day = state.days[d];
+    let status: MapStatus = 'future';
+    if (j && d === date) status = 'today';
+    else if (j && d < date) {
+      const sc = dayScore(d, state);
+      const cp = n === 30 || n === 60 ? checkpointDone(String(n) as CheckpointKey, state.profile) : false;
+      if (sc.success || cp) status = 'bloom';
+      else if (sc.done > 0 || isAnswered(day) || energyOf(day) !== undefined) status = 'seed';
+      else status = 'missed';
+    }
+    const mod = MODULES.find((m) => m.days.includes(n));
+    out.push({
+      day: n, date: d, status, sprout: n % 7 === 0,
+      chapter: chapterOf(n) as 1 | 2 | 3 | 4,
+      ...(n === 30 || n === 60 ? { checkpoint: n as 30 | 60 } : {}),
+      ...(mod ? { module: mod.key } : {}),
+    });
+  }
+  return out;
+}
+
+// ---------- entry card state (Today) ----------
+
+export type EntryKind =
+  | 'invite' | 'upcoming' | 'page-soon' | 'page' | 'written' | 'skipped'
+  | 'checkpoint' | 'checkpoint-done' | 'reset' | 'done';
+
+export interface EntryState {
+  kind: EntryKind;
+  /** Journey day (1 … 60), null outside. */
+  day: number | null;
+  /** Day-0 baseline still to fill (shown as a chip, first 15 days). */
+  baselineDue: boolean;
+  /** The Sunday reset is due (Sunday evening / Monday morning). */
+  resetDue: boolean;
+  /** Last day of a chapter (15, 30, 45, 60). */
+  chapterEnd: boolean;
+  /** Days left before the start (upcoming). */
+  daysToStart?: number;
+}
+
+/** What the "Revenir à moi" card on Today shows at `hour` (0–24). Null: nothing to show. */
+export function entryState(date: string, hour: number, state: AppState = store.state): EntryState | null {
+  const p = state.profile;
+  const st = journeyStatus(date, p);
+  const j = journeyOf(p);
+  if (st === 'none' || !j) return { kind: 'invite', day: null, baselineDue: false, resetDue: false, chapterEnd: false };
+  const baselineDue = !checkpointDone('0', p);
+  const base = { baselineDue, resetDue: false, chapterEnd: false };
+  if (st === 'upcoming') return { ...base, kind: 'upcoming', day: null, daysToStart: daysBetween(date, j.startDate) };
+  const due = resetDue(date, hour, state);
+  if (st === 'done') {
+    // A week to look back, then the card leaves Today.
+    if (daysBetween(addDays(j.startDate, JOURNEY_DAYS - 1), date) > 7) return null;
+    return { ...base, baselineDue: false, kind: due ? 'reset' : 'done', day: null, resetDue: due };
+  }
+  const n = journeyDay(date, p)!;
+  const out: EntryState = { ...base, baselineDue: baselineDue && n <= 15, kind: 'page', day: n, resetDue: due, chapterEnd: dayInChapter(n) === CHAPTER_DAYS };
+  if (due) return { ...out, kind: 'reset' };
+  if (n === 30 || n === 60) return { ...out, kind: checkpointDone(String(n) as CheckpointKey, p) ? 'checkpoint-done' : 'checkpoint' };
+  const day = state.days[date];
+  if (day?.journey?.answer?.skipped) return { ...out, kind: 'skipped' };
+  if (isAnswered(day)) return { ...out, kind: 'written' };
+  return { ...out, kind: hour < 18 ? 'page-soon' : 'page' };
 }
