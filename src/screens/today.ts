@@ -11,10 +11,10 @@ import type { PlannedSession, Sport, Workout } from '../types';
 import { store, uid } from '../store';
 import {
   h, gearIcon, beads, toast, fmtKg, fmtInt, parseNum,
-  sectionTitle, infoRow, iconCircle, checkRow, rowList, haptic, ICON,
+  sectionTitle, infoRow, iconCircle, checkRow, rowList, haptic, ICON, SPORT_LABEL,
 } from '../lib/ui';
 import { today, addDays, daysBetween, fmtLong, weekday } from '../lib/dates';
-import { movingAverage, plannedWeight } from '../lib/nutrition';
+import { bmr, movingAverage, plannedWeight, stepsBurn, STEP_BASE, workoutKcal } from '../lib/nutrition';
 import { adaptedSessionsOn } from '../data/plan';
 import { cycleOn, cycleSettings, phaseLabel } from '../lib/cycle';
 import { recoveryFlag, habitScore, HABITS } from '../lib/habits';
@@ -71,7 +71,11 @@ export const renderToday: Screen = (root, ctx) => {
 
   // The current moment first, then what comes next; past moments fold under "Plus tôt".
   const idx = MOMENTS.indexOf(moment);
-  for (const m of MOMENTS.slice(idx)) root.append(...momentBlock(m, moment, date, ctx));
+  for (const m of MOMENTS.slice(idx)) {
+    root.append(...momentBlock(m, moment, date, ctx));
+    // Sport stays in view all day (it used to fold away with "Ta journée" in the evening).
+    if (m === moment && p.onboarded) root.append(...sportBlock(date, ctx));
+  }
   const past = MOMENTS.slice(0, idx);
   if (past.length) {
     root.append(sectionTitle('Plus tôt aujourd’hui'));
@@ -154,7 +158,6 @@ function momentContent(m: Moment, current: Moment, date: string, ctx: ScreenCtx)
   } else if (m === 'journee') {
     // In the evening the plate lives in CE SOIR (the dinner): no second copy here.
     if (current !== 'soir') rows.push(plateRow(date, 'journee', ctx));
-    rows.push(...sessionRows(date, ctx));
     // The engagements live here until the evening, then move to CE SOIR.
     if (current !== 'soir') rules = journeyRulesRows(date);
     if (current === 'journee') {
@@ -321,21 +324,23 @@ function sessionRows(date: string, ctx: ScreenCtx): HTMLElement[] {
   const out: HTMLElement[] = [];
 
   if (!sessions.length) {
-    const moved = day.workouts.length > 0;
-    out.push(infoRow({
-      icon: moved ? ICON.spark : ICON.leaf,
-      title: moved ? 'Tu as bougé aujourd’hui' : 'Jour off',
-      detail: moved ? 'Bien joué.' : 'Une marche de 20 min compte aussi.',
-      onClick: () => ctx.go('training'),
-    }));
+    // Whatever she did is listed below it (sportBlock): "Jour off" only on an empty day.
+    if (!day.workouts.length && !p.basketDays.includes(weekday(date))) {
+      out.push(infoRow({ icon: ICON.leaf, title: 'Jour off', detail: 'Une marche de 20 min compte aussi.', onClick: () => ctx.go('training') }));
+    }
   } else {
     for (const a of sessions) out.push(sessionRow(date, a.session, day.workouts, ctx, a.note, recovery.low));
   }
 
   if (p.basketDays.includes(weekday(date))) {
-    const done = day.workouts.some((w) => w.sport === 'basket');
+    const bw = day.workouts.find((w) => w.sport === 'basket');
+    const done = !!bw;
+    const weight = store.weightOn(date);
+    const detail = bw
+      ? workoutLine(bw, weight)
+      : `90 min · pense à le noter · environ +${fmtInt(bonusOf({ id: '', sport: 'basket', minutes: 90 }, weight))} kcal à ton budget`;
     out.push(checkRow({
-      title: 'Basket', detail: done ? 'Noté · bravo' : '90 min · pense à le noter', on: done, label: 'Basket fait',
+      title: 'Basket', detail, on: done, label: 'Basket fait',
       onToggle: () => done ? unlog(date, (w) => w.sport === 'basket') : logWorkout(date, { sport: 'basket' as Sport, minutes: 90 }, 'Basket noté'),
     }));
   }
@@ -347,7 +352,7 @@ function sessionRow(date: string, s: PlannedSession, workouts: Workout[], ctx: S
   const markFull = () => { miniOpen.delete(s.id); logWorkout(date, { sport: s.sport, minutes: s.minutes, plannedId: s.id, mini: false }, 'Séance notée'); };
   const markMini = () => { miniOpen.delete(s.id); logWorkout(date, { sport: s.sport, minutes: 15, plannedId: s.id, mini: true }, 'Version mini notée'); };
   const detail = done
-    ? (done.mini ? `Version mini faite · ${done.minutes} min` : `Faite · ${done.minutes} min`)
+    ? (done.mini ? `Version mini faite · ${workoutLine(done, store.weightOn(date))}` : `Faite · ${workoutLine(done, store.weightOn(date))}`)
     : [`${s.minutes} min · ${s.intensity}`, s.optional ? 'optionnelle' : null, lowRecovery && s.mini ? 'récup basse : la mini suffit' : note ?? null].filter(Boolean).join(' · ');
   const row = checkRow({
     title: s.title, detail, on: !!done, label: `${s.title} faite`, cls: 'dc-sess-row',
@@ -367,6 +372,83 @@ function sessionRow(date: string, s: PlannedSession, workouts: Workout[], ctx: S
       : h('div', { class: 'dc-sess-links' },
           h('button', { class: 'dc-link', type: 'button', onclick: (e: Event) => { haptic(e.currentTarget as Element); miniOpen.add(s.id); rerender(ctx); } }, 'Version mini · 15 min')),
   );
+}
+
+// ---------- sport block ----------
+
+/** Half of the burn goes back to the plate (lib/nutrition targets). */
+function bonusOf(w: Workout, weight: number): number {
+  return Math.round((workoutKcal(w, weight, bmr(store.profile, weight)) * 0.5) / 10) * 10;
+}
+
+/** "92 min · 610 kcal · FC 142 · Garmin" */
+function workoutLine(w: Workout, weight: number): string {
+  const kcal = w.calories && w.calories > 0 ? w.calories : workoutKcal(w, weight);
+  return [
+    w.time ? `à ${w.time.replace(':', ' h ')}` : null,
+    `${fmtInt(w.minutes)} min`,
+    // GPS distance means nothing on a court.
+    w.distanceKm && w.sport !== 'basket' ? `${String(w.distanceKm).replace('.', ',')} km` : null,
+    `${fmtInt(kcal)} kcal${w.calories ? '' : ' (estimé)'}`,
+    w.avgHr ? `FC ${w.avgHr}` : null,
+    w.source === 'garmin' || w.garminId ? 'Garmin' : null,
+  ].filter(Boolean).join(' · ');
+}
+
+/** Steps of the day (Garmin or typed on Équilibre): progress to the 8 000 pillar and the kcal they add. */
+function stepsRow(date: string, ctx: ScreenCtx): HTMLElement {
+  const day = store.getDay(date);
+  const { steps, inWorkouts } = stepsBurn(day, store.weightOn(date));
+  const { t } = budgetOn(date);
+  const goal = 8000;
+  const garmin = day.wellbeing?.source === 'garmin' && !(day.wellbeing.manual ?? []).includes('steps');
+  const detail = !steps
+    ? 'Pas encore de pas aujourd’hui · Garmin les envoie toutes les heures'
+    : [
+        steps >= goal ? 'pilier marche ✓' : `encore ${fmtInt(goal - steps)} pour ${fmtInt(goal)}`,
+        t.stepBonus > 0 ? `+${fmtInt(t.stepBonus)} kcal à ton budget`
+          : inWorkouts > 0 ? 'ceux de tes séances sont déjà comptés dans le sport'
+          : `les kcal comptent au-delà de ${fmtInt(STEP_BASE)} pas`,
+        garmin ? 'Garmin' : null,
+      ].filter(Boolean).join(' · ');
+  const row = h('button', { class: 'info-row tap dc-steps', type: 'button', onclick: () => ctx.go('balance') },
+    iconCircle(ICON.leaf),
+    h('span', { class: 'info-main' },
+      h('span', { class: 'info-title num' }, steps ? `${fmtInt(steps)} pas` : 'Tes pas'),
+      h('span', { class: 'dc-steps-bar', 'aria-hidden': 'true' }, h('span', { style: `width:${Math.min(100, Math.round((steps / goal) * 100))}%` })),
+      h('span', { class: 'info-detail' }, detail)),
+    h('span', { class: 'info-chev', 'aria-hidden': 'true' }, '›'));
+  return row;
+}
+
+/** TON SPORT: the planned sessions, basket, and everything else she did (Garmin or by hand). */
+function sportBlock(date: string, ctx: ScreenCtx): HTMLElement[] {
+  const day = store.getDay(date);
+  const weight = store.weightOn(date);
+  const planned = new Set(adaptedSessionsOn(date, store.profile, store.state.days).map((a) => a.session.id));
+  const basketDay = store.profile.basketDays.includes(weekday(date));
+  const rows: HTMLElement[] = sessionRows(date, ctx);
+  // Done but not shown above: unplanned workouts (a walk, a ride…), a second basket.
+  let basketShown = false;
+  for (const w of day.workouts) {
+    if (w.plannedId && planned.has(w.plannedId)) continue;
+    if (w.sport === 'basket' && basketDay && !basketShown) { basketShown = true; continue; }
+    rows.push(infoRow({
+      icon: ICON.spark, title: SPORT_LABEL[w.sport] ?? 'Activité', detail: workoutLine(w, weight),
+      onClick: () => ctx.go('training'),
+    }));
+  }
+  rows.unshift(stepsRow(date, ctx));
+  const { t } = budgetOn(date);
+  const bonus = t.sportBonus + t.stepBonus;
+  const who = t.sportBonus > 0 && t.stepBonus > 0 ? 'Ton sport et tes pas ajoutent' : t.stepBonus > 0 ? 'Tes pas ajoutent' : 'Ton sport ajoute';
+  const foot = bonus > 0
+    ? h('p', { class: 'dc-sport-foot small' }, `${who} `, h('strong', { class: 'num' }, `+${fmtInt(bonus)} kcal`), ` à ton budget repas.`)
+    : null;
+  return [
+    sectionTitle('Ton sport'),
+    h('section', { class: 'card ux dc-moment dc-sport' }, rowList(...rows), foot),
+  ];
 }
 
 // ---------- tomorrow ----------

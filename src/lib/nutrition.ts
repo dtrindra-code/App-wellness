@@ -52,9 +52,29 @@ const MET: Record<Sport, number> = {
   other: 5,
 };
 
-export function workoutKcal(w: Workout, weight: number): number {
+/**
+ * Active kcal of a workout. Garmin's number (heart-rate based) wins when present, minus the resting
+ * burn of that time (Garmin counts it, the base target already does); else a MET estimate.
+ */
+export function workoutKcal(w: Workout, weight: number, restingPerDay = 0): number {
+  if (typeof w.calories === 'number' && w.calories > 0) {
+    return Math.max(0, Math.round(w.calories - (restingPerDay * (w.minutes || 0)) / 1440));
+  }
   const effort = w.rpe ? 0.7 + w.rpe * 0.06 : 1; // rpe 5 => 1.0
   return Math.round((MET[w.sport] ?? MET.other) * weight * ((w.minutes || 0) / 60) * effort) || 0;
+}
+
+/** Steps a workout already counts (cadence × minutes), so the step bonus never counts them twice. */
+const CADENCE: Partial<Record<Sport, number>> = { walk: 110, run: 160, basket: 90, other: 60 };
+/** Everyday steps already inside the activity factor (maintenance). */
+export const STEP_BASE = 6000;
+
+/** Steps of the day beyond the everyday base and outside workouts, and what they burn (~35 kcal / 1000 steps at 70 kg). */
+export function stepsBurn(day: DayLog | undefined, weight: number): { steps: number; inWorkouts: number; extra: number; kcal: number } {
+  const steps = Math.max(0, Math.round(day?.wellbeing?.steps ?? 0));
+  const inWorkouts = (day?.workouts ?? []).reduce((s, w) => s + (w.steps ?? (CADENCE[w.sport] ?? 0) * (w.minutes || 0)), 0);
+  const extra = Math.max(0, steps - inWorkouts - STEP_BASE);
+  return { steps, inWorkouts, extra, kcal: Math.round(extra * weight * 0.0005) };
 }
 
 export interface Targets {
@@ -62,7 +82,9 @@ export interface Targets {
   kcal: number;
   /** Extra budget earned by today's workouts (50 % of their estimated burn). */
   sportBonus: number;
-  /** kcal + sportBonus. */
+  /** Extra budget earned by steps beyond the everyday base (50 % of their burn, workouts excluded). */
+  stepBonus: number;
+  /** kcal + sportBonus + stepBonus. */
   budget: number;
   protein: number;
   /** Soft carb ceiling in grams (only during lavage). */
@@ -87,12 +109,14 @@ export function targets(date: string, p: Profile, weight: number, day?: DayLog, 
   if (ttc) deficit = Math.min(deficit, 450);
   if (pregnant) deficit = 0;
   const kcal = Math.max(floor, Math.round((maint - deficit + (pregnant ? 0 : cycleAdjust)) / 10) * 10);
-  const burn = (day?.workouts ?? []).reduce((s, w) => s + workoutKcal(w, weight), 0);
+  const burn = (day?.workouts ?? []).reduce((s, w) => s + workoutKcal(w, weight, bmr(p, weight)), 0);
   const sportBonus = Math.round((burn * 0.5) / 10) * 10;
+  const stepBonus = Math.round((stepsBurn(day, weight).kcal * 0.5) / 10) * 10;
   return {
     kcal,
     sportBonus,
-    budget: kcal + sportBonus,
+    stepBonus,
+    budget: kcal + sportBonus + stepBonus,
     protein: Math.round(weight * (pregnant ? 1.2 : 1.8)),
     carbsMax: phase === 'lavage' && !pregnant ? (ttc ? 120 : 100) : undefined,
     waterL: phase === 'lavage' ? 2.5 : 2,

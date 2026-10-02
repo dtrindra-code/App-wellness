@@ -2452,3 +2452,8 @@ textarea.jn-lines:focus-visible { outline: 2px solid var(--jn-ink); outline-offs
 .card.ux.dc-pillars-link { flex-direction: row; padding: 0 16px; border: 1px solid var(--line); border-radius: 22px; min-height: 56px; background: var(--surface); }
 .card.ux.dc-rules { padding: 14px 16px; }
 .dc-rules .jr-rows { border: 0; padding: 0; margin: 0; background: none; }
+.dc-sport-foot { padding: 10px 0 12px; border-top: 1px solid var(--line); color: var(--muted); }
+.dc-sport-foot strong { color: var(--ink); }
+.dc-steps-bar { display: block; height: 6px; margin: 6px 0 4px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.dc-steps-bar > span { display: block; height: 100%; border-radius: 3px; background: var(--pink-deep); }
+.dc-steps .info-title { font-family: var(--font-display); font-size: var(--fs-18); font-weight: 700; }
