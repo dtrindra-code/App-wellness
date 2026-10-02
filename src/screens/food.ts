@@ -11,8 +11,8 @@ import {
   sectionTitle, infoRow, carousel, tipCard, disclosure, keyBubble, ICON,
 } from '../lib/ui';
 import type { Sheet } from '../lib/ui';
-import { today, addDays, fmtLong, range } from '../lib/dates';
-import { phaseOn, targets, totals } from '../lib/nutrition';
+import { today, addDays, fmtLong, range, weekday } from '../lib/dates';
+import { phaseOn, targets, totals, workoutKcal } from '../lib/nutrition';
 import { aiImagesAvailable, askJSON, aiErrorMessage } from '../lib/ai';
 import { adviceFor, cycleOn, cycleSettings } from '../lib/cycle';
 import type { PhaseAdvice } from '../lib/cycle';
@@ -550,6 +550,7 @@ function summaryCard(date: string): HTMLElement {
       `Mangé ${fmtInt(eaten.kcal)} kcal sur ${fmtInt(t.budget)}`,
       t.sportBonus > 0 ? ` · dont +${fmtInt(t.sportBonus)} sport` : '',
       cycleExtra > 0 ? ` · +${fmtInt(cycleExtra)} cycle` : ''),
+    basketHint(date),
     h('div', { class: 'row', style: 'gap:8px' },
       h('button', { class: 'btn primary grow food-big', type: 'button', onclick: () => openSearch(date) }, 'Ajouter un aliment'),
       h('button', { class: 'btn', type: 'button', onclick: () => openSearch(date, undefined, true) }, 'Scanner'),
@@ -623,6 +624,15 @@ function mealSub(m: Meal): string {
   if (m.grams) parts.push(`${fmtInt(m.grams)} ${getFood(m.foodId)?.liquid ? 'ml' : 'g'}`);
   if (m.protein !== undefined) parts.push(`${fmtG(m.protein)} g prot`);
   return parts.join(' · ');
+}
+
+/** Basket day, not logged yet: say what it will add once noted (Garmin or the tick on Aujourd'hui). */
+function basketHint(date: string): HTMLElement | null {
+  const p = store.profile;
+  if (!p.basketDays.includes(weekday(date)) || store.getDay(date).workouts.some((w) => w.sport === 'basket')) return null;
+  const weight = store.weightOn(date);
+  const bonus = Math.round((workoutKcal({ id: '', sport: 'basket', minutes: 90 }, weight) * 0.5) / 10) * 10;
+  return h('p', { class: 'small food-sport-hint' }, `Basket aujourd’hui : environ `, h('strong', { class: 'num' }, `+${fmtInt(bonus)} kcal`), ` en plus dès qu’il est noté.`);
 }
 
 function weekLine(date: string): HTMLElement | null {

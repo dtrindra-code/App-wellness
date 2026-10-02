@@ -52,7 +52,14 @@ const MET: Record<Sport, number> = {
   other: 5,
 };
 
-export function workoutKcal(w: Workout, weight: number): number {
+/**
+ * Active kcal of a workout. Garmin's number (heart-rate based) wins when present, minus the resting
+ * burn of that time (Garmin counts it, the base target already does); else a MET estimate.
+ */
+export function workoutKcal(w: Workout, weight: number, restingPerDay = 0): number {
+  if (typeof w.calories === 'number' && w.calories > 0) {
+    return Math.max(0, Math.round(w.calories - (restingPerDay * (w.minutes || 0)) / 1440));
+  }
   const effort = w.rpe ? 0.7 + w.rpe * 0.06 : 1; // rpe 5 => 1.0
   return Math.round((MET[w.sport] ?? MET.other) * weight * ((w.minutes || 0) / 60) * effort) || 0;
 }
@@ -87,7 +94,7 @@ export function targets(date: string, p: Profile, weight: number, day?: DayLog, 
   if (ttc) deficit = Math.min(deficit, 450);
   if (pregnant) deficit = 0;
   const kcal = Math.max(floor, Math.round((maint - deficit + (pregnant ? 0 : cycleAdjust)) / 10) * 10);
-  const burn = (day?.workouts ?? []).reduce((s, w) => s + workoutKcal(w, weight), 0);
+  const burn = (day?.workouts ?? []).reduce((s, w) => s + workoutKcal(w, weight, bmr(p, weight)), 0);
   const sportBonus = Math.round((burn * 0.5) / 10) * 10;
   return {
     kcal,

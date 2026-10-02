@@ -346,9 +346,33 @@ def fetch_day(g: Any, day: str, tz: Any) -> dict[str, Any]:
     return out
 
 
+def _act_list(v: Any) -> list[Any]:
+    """Garmin answers a list, or sometimes an object wrapping it."""
+    if isinstance(v, list):
+        return v
+    if isinstance(v, dict):
+        for k in ("activityList", "activities"):
+            if isinstance(v.get(k), list):
+                return v[k]
+    return []
+
+
+def raw_activities(g: Any, start: str, end: str) -> list[dict[str, Any]]:
+    """The date search first; when it comes back empty, the latest activities filtered by date
+    (the search endpoint has returned nothing for some accounts). Logs counts only."""
+    by_date = [a for a in _act_list(g.get_activities_by_date(start, end)) if isinstance(a, dict)]
+    if by_date:
+        print(f"Activités Garmin : {len(by_date)} par la recherche par date.", flush=True)
+        return by_date
+    recent = [a for a in _act_list(g.get_activities(0, 30)) if isinstance(a, dict)]
+    kept = [a for a in recent if start <= str(a.get("startTimeLocal") or "")[:10] <= end]
+    print(f"Activités Garmin : 0 par date, {len(kept)} sur {len(recent)} récentes dans la période.", flush=True)
+    return kept
+
+
 def fetch_activities(g: Any, start: str, end: str) -> list[dict[str, Any]]:
     out = []
-    for a in g.get_activities_by_date(start, end) or []:
+    for a in raw_activities(g, start, end):
         aid = a.get("activityId")
         local = str(a.get("startTimeLocal") or "")
         if not aid or len(local) < 16:
