@@ -2446,3 +2446,9 @@ textarea.jn-lines:focus-visible { outline: 2px solid var(--jn-ink); outline-offs
 .disc-head { text-align: left; }
 /* QA évoluer: no box inside the pink coach card — the focus line sits on a hairline */
 .pg-focus { background: transparent; border-radius: 0; padding: 12px 0 0; border-top: 1px solid color-mix(in srgb, var(--on-pink) 25%, transparent); }
+
+/* Today: each moment sits in a plain white block, like Progrès */
+.card.ux.dc-moment { padding: 4px 16px; gap: 0; }
+.card.ux.dc-pillars-link { flex-direction: row; padding: 0 16px; border: 1px solid var(--line); border-radius: 22px; min-height: 56px; background: var(--surface); }
+.card.ux.dc-rules { padding: 14px 16px; }
+.dc-rules .jr-rows { border: 0; padding: 0; margin: 0; background: none; }
